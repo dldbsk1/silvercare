@@ -1,32 +1,18 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI
 
-from app.database import check_database
-from app.auth import get_current_user_id
+from app.api.v1.router import api_router
+from app.core.errors import register_exception_handlers
 
 
 app = FastAPI(title="SilverCare API")
 
+register_exception_handlers(app)
 
+
+# 배포 헬스체크용이라 버전 경로 밖에 둔다
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
-# 개발 전용
-@app.get("/dev/db-check")
-def db_check():
-    count = check_database()
-    return {
-        "database_connected": True,
-        "survey_item_count": count
-    }
-
-
-@app.get("/auth/me")
-def get_my_info(
-    user_id: str = Depends(get_current_user_id)
-):
-    return {
-        "authenticated": True,
-        "user_id": user_id
-    }
+app.include_router(api_router, prefix="/v1")

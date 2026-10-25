@@ -7,7 +7,7 @@
 
 ## 지금 바로 할 일
 
-- [ ] 0~1단계 작업 커밋·푸시 (`dldbsk` 브랜치) — GitHub에는 첫 업로드만 올라가 있음
+- [x] 0~1단계 작업 커밋·푸시 (`dldbsk` 브랜치)
 - [ ] `python -m scripts.smoke_test` 실제 계정으로 실행해서 전부 PASS 확인
 - [ ] 앱·웹 팀에 공유: 모든 경로가 `/v1` 아래로 이동 (`/auth/me` → `/v1/auth/me`)
 - [ ] API 명세서 4.2 수정: 음성 기록은 multipart 대신 "업로드 URL 발급 → Storage 직접 업로드 → `audio_path` JSON 전달"

@@ -22,6 +22,9 @@
 - [ ] STT·LLM 제공업체 선택 (Whisper / Clova / Google) — AI 팀원과
 - [ ] 백엔드 배포처 (Railway / Render / Fly.io)
 - [ ] 단톡방 원문을 외부 AI에 보낼 범위 (다른 가족 개인정보 포함, API 명세서 10장)
+- [ ] 가족 호칭 저장 위치 (기록 작성자 "나 · 형" 표시용 — `users`·`family_members`에 칸 없음, 6단계 가족 초대 전)
+- [ ] 52항목 외 일반 분류(감정 등) 추가 여부 — 추가 시 52항목과 분리된 별도 테이블
+- [ ] 분류 확신도 기준값 (`MIN_CONFIDENCE = 0.5`) — AI 팀원과 조정
 
 ---
 
@@ -47,12 +50,13 @@
 - [x] 첫 요청 때 `public.users` 프로필 자동 생성
 - [x] 가족 권한 의존성 `ReadAccess` / `WriteAccess` / `AdminAccess` (가족 아님 404)
 - [x] 필수 동의 확인 의존성 `ConsentedUser`
-- [ ] URL에 `parent_id`가 없는 API(`/records/{id}` 등)용 "리소스 → 부모님 → 권한" 헬퍼 (2단계에서)
-- [ ] 작성자 본인만 수정 규칙 (타인 기록은 admin도 수정 불가, 댓글만)
+- [x] URL에 `parent_id`가 없는 API(`/records/{id}` 등)용 "리소스 → 부모님 → 권한" 헬퍼 (`record_access`)
+- [x] 작성자 본인만 수정 규칙 (타인 기록은 admin도 수정 불가, 댓글만)
 - [ ] (나중) JWT 서버 직접 검증으로 바꿔 Auth 서버 호출 줄이기
 
 ### 비동기 작업
 - [x] Postgres 작업 큐 `jobs` 테이블 (`migrations/001_jobs.sql`, DB 적용됨)
+- [x] 작업 상태 `superseded` (결과 버림) + 최종 실패 시 `on_failure` (`migrations/002`)
 - [x] `enqueue()` — 저장과 작업 등록을 한 트랜잭션으로
 - [x] 워커 `python -m app.workers.worker` (재시도 30초→2분→8분, 멈춘 작업 회수)
 - [x] 작업 상태 조회 `get_latest_job()`
@@ -97,12 +101,19 @@
 
 ## 2단계 · 기록 + AI 분류 (P0 핵심)
 
+### 기록 상태·버전 (DB, `migrations/002_records_classification.sql`)
+- [x] `status`(사용 여부) / `processing_status`(AI 분석) / `classification_status`(분류 결과) 분리
+- [x] `classified_by` (ai / user) — user면 AI 재분류 금지
+- [x] `text_version` — `current_text` 변경 시에만 트리거가 +1, 앱에서 변경 불가
+- [x] 미분류 = `classification_status=unclassified` (52항목 테이블에 미분류 항목 추가 안 함)
+
 ### 텍스트 기록 — A-HOME-002/003
-- [ ] `POST /v1/parents/{id}/records/text` (`WriteAccess`, `Idempotency-Key`)
-  - [ ] 1~1000자, 공백만 입력 거부
-  - [ ] 출처 미선택 시 `direct`, 일반 입력에서 `kakao` 금지
-  - [ ] `recorded_at`(기기 시각) / `occurred_at`(사건 시각) 구분, 비정상적인 미래 시각 처리
-  - [ ] 원문 먼저 저장 → 분류 작업 등록 (한 트랜잭션), 분류가 실패해도 기록은 남음
+- [x] `POST /v1/parents/{id}/records/text` (`WriteAccess`, `Idempotency-Key`, 201)
+  - [x] 1~1000자, 공백만 입력 거부
+  - [x] 출처 미선택 시 `direct`, 일반 입력에서 `kakao` 금지
+  - [x] `recorded_at` / `occurred_at` 구분, 오프셋 필수, 5분 넘는 미래 시각 거부
+  - [x] 원문 저장(`original_text` = `current_text`) + 분류 작업 등록 (한 트랜잭션)
+  - [x] 중복 요청 1건만 저장, 동시 요청·다른 내용 409
 
 ### 음성 기록 — A-HOME-001/003
 - [ ] `POST /v1/parents/{id}/records/audio` — `audio_path` JSON (`Idempotency-Key`)
@@ -113,16 +124,20 @@
 
 ### 처리 작업 (워커)
 - [ ] `transcribe_record`: Storage에서 음성 → STT → 원문 저장 → 분류 작업 등록
-- [ ] `classify_record`: 분류 → `record_items` 저장 (52항목 코드만, 확신 낮으면 미분류)
-- [ ] 실패 시 `processing_status=failed`, 원문·음성은 유지
-- [ ] 작업을 멱등하게 (두 번 실행돼도 결과 같게)
+- [x] `classify_record`: 분류 → `record_items` 저장 (52항목 코드만, 확신 낮으면 미분류)
+  - [x] 결과 저장 시 행 잠금 + `text_version` 비교 → 다르면 버림(`superseded`)
+  - [x] 이전 버전 작업이 늦게 끝나거나 실패해도 최신 기록 상태 변경 안 함
+- [x] 실패 시 `processing_status=failed`, 원문은 유지
+- [x] 작업을 멱등하게 (두 번 실행돼도 결과 같게)
 
 ### 상태·재시도 — A-HOME-004/005
-- [ ] `GET /v1/records/{id}/processing` — 진행 상태 + 분류 결과 (저장 확인 카드용)
-- [ ] `POST /v1/records/{id}/reclassify` — 분류 재시도
-- [ ] 홈 최근 기록 3건 (A-HOME-009 일부, P0)
+- [x] `GET /v1/records/{id}/processing` — 진행 상태 + 분류 결과 (저장 확인 카드용)
+- [x] `POST /v1/records/{id}/reclassify` — 작성자만, 분석 중·사용자 분류면 409
+- [x] 홈 최근 기록 3건 `GET /v1/parents/{id}/records?status=normal&limit=3`
+- [x] 기록 상세 `GET /v1/records/{id}` (원문·분류·수정 여부)
 
 ### AI 연결
+- [x] AI Mock (키워드 분류, 실제 DB 52항목 코드만, `[ai-fail]` 등 실패 재현) — `AI_PROVIDER=mock`, local 전용
 - [ ] 👤 AI 팀원: STT·분류 구현 → `ai/provider.py` 교체
 - [ ] 👤 AI 팀원: 테스트 문장 20개 중 16개 이상 정확 분류 (완료 기준)
 - [ ] 외부 AI로 보내는 정보 최소화, 학습 미사용 옵션 확인
@@ -130,7 +145,7 @@
 ### 완료 기준 (기능명세서)
 - [ ] 1분 녹음 종료 후 10초 안에 저장 확인 카드
 - [ ] 인터넷 끄고 기록해도 연결 후 사라지지 않음
-- [ ] 글을 고쳐도 원문을 다시 볼 수 있음 (6단계 수정 API와 함께)
+- [x] 글을 고쳐도 원문을 다시 볼 수 있음 (서버: `original_text` 보존 + DB 트리거로 변경 차단)
 
 ---
 
@@ -213,11 +228,13 @@
 ## 6단계 · P1 (MVP)
 
 ### 기록함 — A-LIST / A-DET
-- [ ] `GET /v1/parents/{id}/records` — 최신순 20개씩, 커서, 필터(영역·작성자·기간·출처·입력 방식)
-- [ ] `GET /v1/records/{id}` — 상세 (음성 없으면 재생 숨김용 정보)
+- [ ] `GET /v1/parents/{id}/records` — 커서, 필터(영역·작성자·기간·출처·입력 방식) 추가 (최신순·`limit`·`status`는 완료)
+- [x] `GET /v1/records/{id}` — 상세 (2단계에서 완료)
 - [ ] `GET /v1/records/{id}/audio` — 재생용 서명 URL
-- [ ] `PATCH /v1/records/{id}` — 작성자만, 수정 전 상태를 `record_versions`에 (한 트랜잭션)
-  - [ ] 원문·음성·`recorded_at` 등 수정 시도 → 400 `IMMUTABLE_FIELD` (POL-02)
+- [x] `PATCH /v1/records/{id}` — 작성자만, 수정 전 상태를 `record_versions`에 (한 트랜잭션, 2단계에서 앞당김)
+  - [x] 원문·음성·`recorded_at` 등 수정 시도 → 400 `IMMUTABLE_FIELD` (POL-02)
+  - [x] 사용자 직접 분류: 52항목 중 선택만 (`[]` = 미분류), AI보다 우선
+  - [x] 글 수정 → 이전 AI 분류 삭제 + 새 버전 분류 작업 등록 (한 트랜잭션)
 - [ ] `GET /v1/records/{id}/versions` — 수정 이력
 - [ ] `POST /v1/records/{id}/exclude` — 기록지에서 제외 (삭제 아님)
 - [ ] `POST /v1/records/{id}/comments` — 다른 가족 기록에 댓글

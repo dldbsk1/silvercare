@@ -121,3 +121,29 @@ def agree_all(client, version, noti=True):
         {"type": "health", "doc_version": version, "agreed": True},
         {"type": "noti", "doc_version": version, "agreed": noti},
     ]})
+
+
+PARENT = {"nickname": "엄마", "age_band": "80s", "apply_stage": "waiting", "cohabiting": False}
+
+
+@pytest.fixture
+def parent_id(client, user_id, consent_docs):
+    """동의 완료 + 부모님 등록(admin)까지 끝난 상태"""
+    agree_all(client, consent_docs)
+    return client.post("/v1/parents", json=PARENT).json()["data"]["id"]
+
+
+def join_family(db, client, consent_docs, parent_id, role):
+    """다른 가족 추가 (role 지정) → 그 사용자로 로그인한 상태로 반환"""
+    other = create_auth_user(db)
+    client.login(other)
+    agree_all(client, consent_docs)
+    run_sql(
+        db,
+        """
+            INSERT INTO family_members (parent_id, user_id, role)
+            VALUES (:p, :u, CAST(:role AS family_role_enum))
+        """,
+        p=parent_id, u=other, role=role
+    )
+    return other

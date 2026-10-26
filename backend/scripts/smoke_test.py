@@ -1,6 +1,6 @@
 """실제 로그인 토큰으로 가입 흐름(동의 → 부모님 등록)과 음성 업로드를 확인한다.
 
-서버가 켜져 있어야 한다 (uvicorn app.main:app --reload).
+서버가 켜져 있어야 한다 (uvicorn app.main:app --reload --port 8001).
 만든 부모님과 업로드 파일은 끝나면 지운다. 동의 기록과 users 프로필은 남긴다.
 
     cd backend
@@ -17,7 +17,7 @@ from app.db import storage
 from app.db.session import new_session
 
 
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = "http://127.0.0.1:8001"
 OTHER_PARENT_ID = "00000000-0000-0000-0000-000000000000"
 
 results = []

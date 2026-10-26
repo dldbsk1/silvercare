@@ -22,7 +22,7 @@ try:
     token = result.session.access_token
 
     response = httpx.get(
-        "http://127.0.0.1:8000/v1/auth/me",
+        "http://127.0.0.1:8001/v1/auth/me",
         headers={
             "Authorization": f"Bearer {token}"
         },

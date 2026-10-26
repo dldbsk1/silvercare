@@ -3,7 +3,6 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# 실행 위치와 상관없이 backend/.env를 읽는다
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
@@ -18,6 +17,9 @@ class Settings(BaseSettings):
 
     STORAGE_AUDIO_BUCKET: str = "audio"
     STORAGE_IMPORT_BUCKET: str = "kakao-imports"
+
+    # mock / stub / real. 미설정 → local: mock, 그 외: stub
+    AI_PROVIDER: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,

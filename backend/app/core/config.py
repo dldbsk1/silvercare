@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -7,7 +8,7 @@ ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
-    ENV: str = "local"
+    ENV: Literal["local", "test", "staging", "production"] = "local"
 
     DATABASE_URL: str
     SUPABASE_URL: str
@@ -18,7 +19,8 @@ class Settings(BaseSettings):
     STORAGE_AUDIO_BUCKET: str = "audio"
     STORAGE_IMPORT_BUCKET: str = "kakao-imports"
 
-    # mock / stub / real. 미설정 → local: mock, 그 외: stub
+    # mock / stub / real. 미설정 → local·test: mock, staging: stub, production: 오류
+    # 허용 범위: app/ai/provider.py ALLOWED_MODES
     AI_PROVIDER: str | None = None
 
     model_config = SettingsConfigDict(

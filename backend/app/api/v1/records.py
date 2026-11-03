@@ -12,6 +12,7 @@ from app.api.deps import (
 )
 from app.schemas.common import DataResponse
 from app.schemas.records import (
+    AudioPlaybackOut,
     AudioUploadUrlIn,
     AudioUploadUrlOut,
     RecordListItemOut,
@@ -20,6 +21,7 @@ from app.schemas.records import (
     RecordStatus,
     RecordUpdateIn,
     TextRecordIn,
+    VoiceRecordIn,
 )
 from app.services import audio_upload_service, record_service
 from app.services.idempotency import run_idempotent
@@ -36,10 +38,36 @@ router = APIRouter()
 def create_audio_upload_url(
     parent_id: UUID,
     body: AudioUploadUrlIn,
-    access: WriteAccess
+    access: WriteAccess,
+    db: DbSession
 ):
-    """음성 파일 업로드용 서명 URL 발급"""
-    return {"data": audio_upload_service.create_upload(access, body.content_type)}
+    """음성 파일 업로드용 서명 URL + upload_id 발급. 트랜잭션: 서비스 (Storage 호출은 밖)"""
+    return {"data": audio_upload_service.create_upload(db, access, body.content_type)}
+
+
+@router.post(
+    "/parents/{parent_id}/records/audio",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=DataResponse[RecordOut]
+)
+def create_voice_record(
+    parent_id: UUID,
+    body: VoiceRecordIn,
+    access: WriteAccess,
+    db: DbSession,
+    idempotency_key: IdempotencyKey = None
+):
+    """음성 기록 (A-HOME-001). 업로드 확인 → 저장 + 받아쓰기 작업. 같은 키 재전송 → 첫 응답"""
+    status_code, response = run_idempotent(
+        db, access.user_id, "POST /v1/parents/{parent_id}/records/audio",
+        idempotency_key,
+        request_body={"parent_id": access.parent_id, **body.model_dump(mode="json")},
+        handler=lambda: (
+            202,
+            {"data": record_service.create_voice(db, access, body)}
+        )
+    )
+    return JSONResponse(response, status_code=status_code)
 
 
 @router.post(
@@ -99,6 +127,16 @@ def get_processing(record_id: UUID, user: ConsentedUser, db: DbSession):
         return {"data": record_service.get_processing(db, user.id, str(record_id))}
 
 
+@router.get(
+    "/records/{record_id}/audio",
+    response_model=DataResponse[AudioPlaybackOut]
+)
+def get_record_audio(record_id: UUID, user: ConsentedUser, db: DbSession):
+    """음성 재생 (A-DET-001). 5분 서명 URL, viewer 포함"""
+    with db.begin():
+        return {"data": record_service.get_audio_url(db, user.id, str(record_id))}
+
+
 @router.patch("/records/{record_id}", response_model=DataResponse[RecordOut])
 def update_record(
     record_id: UUID,
@@ -117,6 +155,6 @@ def update_record(
     response_model=DataResponse[RecordProcessingOut]
 )
 def reclassify_record(record_id: UUID, user: ConsentedUser, db: DbSession):
-    """AI 분류 재시도 (A-HOME-004). 작성자만"""
+    """재처리 (A-HOME-004). 작성자만. 실패한 단계부터 (받아쓰기 / 분류)"""
     with db.begin():
         return {"data": record_service.reclassify(db, user.id, str(record_id))}

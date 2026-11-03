@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Literal
 
+from uuid import UUID
+
 from pydantic import AwareDatetime, BaseModel, Field, field_validator
 
 
@@ -9,6 +11,12 @@ RecordStatus = Literal["normal", "excluded"]
 ProcessingStatus = Literal["pending", "processing", "completed", "failed"]
 ClassificationStatus = Literal["classified", "unclassified"]
 SetBy = Literal["ai", "user"]
+# 계산값: 음성 + 원문 없음 → transcription / 처리 미완료(실패 포함) → classification / done
+Stage = Literal["transcription", "classification", "done"]
+
+# 글 수정 한도. 음성: 3분 받아쓰기 ≈ 900~1200자
+TEXT_MAX_LENGTH = 1000
+VOICE_TEXT_MAX_LENGTH = 2000
 
 
 # ── 음성 업로드 ──
@@ -18,11 +26,30 @@ class AudioUploadUrlIn(BaseModel):
 
 
 class AudioUploadUrlOut(BaseModel):
+    upload_id: str
     bucket: str
     audio_path: str
     upload_url: str
     token: str
     expires_in_seconds: int
+
+
+class AudioPlaybackOut(BaseModel):
+    url: str
+    expires_in_seconds: int
+
+
+# ── 음성 기록 ──
+
+class VoiceRecordIn(BaseModel):
+    # 업로드 URL 발급 때 받은 값. audio_path는 서버가 audio_uploads에서 꺼냄
+    upload_id: UUID
+    # 앱 측정값. 워커가 실제 길이로 덮어씀
+    duration_seconds: int = Field(ge=2, le=180)
+    source: Literal["direct", "call"] = "direct"
+    # 오프라인 업로드 → 녹음 시각 필수, 오프셋 필수
+    recorded_at: AwareDatetime
+    occurred_at: AwareDatetime | None = None
 
 
 # ── 텍스트 기록 ──
@@ -43,15 +70,16 @@ IMMUTABLE_FIELDS = {
     "id", "parent_id", "author_id", "input_type",
     "original_text", "audio_path", "audio_duration_seconds",
     "recorded_at", "created_at", "updated_at",
-    "text_version", "status", "processing_status",
-    "classification_status", "classified_by",
+    "text_version", "status", "processing_status", "processing_error",
+    "classification_status", "classified_by", "transcript_empty",
 }
 
 
 class RecordUpdateIn(BaseModel):
     """작성자만. 보낸 필드만 변경. occurred_at: null → 비움"""
 
-    current_text: str | None = Field(None, min_length=1, max_length=1000)
+    # 텍스트 1000자 / 음성 2000자 (서비스에서 input_type별 확인)
+    current_text: str | None = Field(None, min_length=1, max_length=VOICE_TEXT_MAX_LENGTH)
     source: RecordSource | None = None
     occurred_at: AwareDatetime | None = None
     # 사용자 직접 분류: 52항목 코드만. [] → 미분류
@@ -84,8 +112,10 @@ class RecordListItemOut(BaseModel):
     source: RecordSource
     status: RecordStatus
     processing_status: ProcessingStatus
+    stage: Stage
     classification_status: ClassificationStatus | None
     current_text: str | None
+    transcript_empty: bool
     is_edited: bool
     areas: list[str]
     recorded_at: datetime
@@ -94,6 +124,7 @@ class RecordListItemOut(BaseModel):
 
 class RecordOut(RecordListItemOut):
     original_text: str | None
+    processing_error: str | None
     classified_by: SetBy | None
     text_version: int
     audio_duration_seconds: int | None
@@ -104,7 +135,12 @@ class RecordOut(RecordListItemOut):
 
 class RecordProcessingOut(BaseModel):
     record_id: str
+    input_type: str
+    stage: Stage
     processing_status: ProcessingStatus
+    # failed 일 때만. STT_*, AUDIO_*, CLASSIFY_FAILED
+    processing_error: str | None
+    transcript_empty: bool
     classification_status: ClassificationStatus | None
     classified_by: SetBy | None
     text_version: int

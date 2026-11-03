@@ -15,6 +15,15 @@ from typing import Protocol
 from pydantic import BaseModel, Field
 
 
+class SpeechToTextNotConfigured(Exception):
+    """STT 구현·키 없음. 재시도 무의미 → STT_NOT_CONFIGURED"""
+
+
+class Transcript(BaseModel):
+    # "" = 말소리 없음 (정상 성공). 실패는 반드시 예외
+    text: str
+
+
 class ItemClassification(BaseModel):
     item_code: str
     confidence: float = Field(ge=0, le=1)
@@ -45,8 +54,13 @@ class ItemSummary(BaseModel):
 
 
 class SpeechToText(Protocol):
-    def transcribe(self, audio: bytes, content_type: str) -> str:
-        """음성 파일 → 받아쓴 원문"""
+    def transcribe(self, audio: bytes, content_type: str) -> Transcript:
+        """음성 파일 → 받아쓴 원문
+
+        - 말소리 없음 → Transcript(text="")
+        - 오류 → 예외 (빈 글로 돌려주기 금지). 미설정 → SpeechToTextNotConfigured
+        - 5분 안에 끝나거나 타임아웃 예외 (워커 회수 기준 10분보다 짧게)
+        """
         ...
 
 

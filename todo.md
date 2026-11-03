@@ -10,7 +10,10 @@
 - [x] 0~1단계 작업 커밋·푸시 (`dldbsk` 브랜치)
 - [ ] `python -m scripts.smoke_test` 실제 계정으로 실행해서 전부 PASS 확인
 - [ ] 앱·웹 팀에 공유: 모든 경로가 `/v1` 아래로 이동 (`/auth/me` → `/v1/auth/me`)
-- [ ] API 명세서 4.2 수정: 음성 기록은 multipart 대신 "업로드 URL 발급 → Storage 직접 업로드 → `audio_path` JSON 전달"
+- [ ] API 명세서 4.2 수정: 음성 기록은 multipart 대신 "업로드 URL 발급(`upload_id`) → Storage 직접 업로드 → `upload_id` JSON 전달"
+- [ ] 앱 팀에 공유 (음성): 업로드 URL 응답 `upload_id`, 기록 생성은 `upload_id`만, 처리 상태 `stage`·`transcript_empty`·`processing_error`, 60초 지나면 조회 중단 + "처리 중" 안내
+- [ ] 앱 팀에 공유 (오류 코드): `AUDIO_ALREADY_USED`(409, `record_id`), `UPLOAD_EXPIRED`(410), `AUDIO_INVALID`(409, 새 녹음 안내), `TRANSCRIPTION_FAILED`(409), 음성 글 수정 2000자
+- [ ] AI 팀원에게 공유: STT는 `Transcript` 반환, 무음 = `""`, 오류는 예외(빈 글 금지), 미설정 = `SpeechToTextNotConfigured`, 5분 안에 끝나거나 타임아웃
 - [ ] AI 팀원에게 `backend/app/ai/interfaces.py` 공유하고 함수 모양 합의
 
 ## 결정이 필요한 것
@@ -60,13 +63,19 @@
 - [x] `enqueue()` — 저장과 작업 등록을 한 트랜잭션으로
 - [x] 워커 `python -m app.workers.worker` (재시도 30초→2분→8분, 멈춘 작업 회수)
 - [x] 작업 상태 조회 `get_latest_job()`
-- [ ] 정기 작업 기능 (단톡방 후보 24시간 삭제, 알림 예약 발송, 만료 키 정리)
+- [x] 작업 소유권 `lease_token` — 회수당한 이전 워커는 완료·실패·결과 저장 불가 (`migrations/003`)
+- [x] 영구 실패 `PermanentJobError` (재시도 없이 failed), 시도 소진 후 회수된 작업 → 실행 없이 failed
+- [x] 최종 실패 = 한 트랜잭션 (jobs 잠금 → failed → 기록 failed + 코드), 잠금 순서 jobs → records
+- [x] AI 설정 검사 — 서버·워커 시작 시 (`production`은 실제 AI만, mock은 local·test만)
+- [x] 정기 작업: 고아 음성 파일 정리 (워커가 1시간마다, 만료 후 7일 유예)
+- [ ] 정기 작업 추가 (단톡방 후보 24시간 삭제, 알림 예약 발송, 만료 키 정리)
 
 ### Storage
 - [x] 비공개 버킷 `audio`(10MB, 음성) · `kakao-imports`(20MB, txt) — `scripts/setup_storage.py`
 - [x] 음성 서명 업로드 URL `POST /v1/parents/{id}/records/audio/upload-url`
-- [x] 업로드 파일 경로·존재 확인 `verify_uploaded_audio()`
-- [ ] 음성 재생용 서명 다운로드 URL (A-DET-001, P1)
+- [x] 업로드 소유권 `audio_uploads` (issued → consumed / expired, DB CHECK·트리거로 상태 모순 금지)
+- [x] 업로드 확인: 파일 존재·10MB·허용 MIME, 덮어쓰기 금지 (`upsert=false`, 실제 Storage로 확인)
+- [x] 음성 재생용 서명 다운로드 URL (A-DET-001, P1)
 
 ### 기타 기반
 - [x] `Idempotency-Key` 처리 (같은 요청 재전송 시 첫 응답 반환, 7일 보관)
@@ -115,24 +124,35 @@
   - [x] 원문 저장(`original_text` = `current_text`) + 분류 작업 등록 (한 트랜잭션)
   - [x] 중복 요청 1건만 저장, 동시 요청·다른 내용 409
 
-### 음성 기록 — A-HOME-001/003
-- [ ] `POST /v1/parents/{id}/records/audio` — `audio_path` JSON (`Idempotency-Key`)
-  - [ ] 경로·파일 존재 확인, 길이 2~180초, 출처 `direct|call`
-  - [ ] 기록 저장(처리 중) → 받아쓰기 작업 등록
+### 음성 기록 — A-HOME-001/003 (`migrations/003_voice_records.sql`)
+- [x] `POST /v1/parents/{id}/records/audio` — `upload_id` JSON (`Idempotency-Key`, 202)
+  - [x] 업로드 소유권(사용자·부모님)·상태 확인, 파일 확인, 길이 2~180초, 출처 `direct|call`, `recorded_at` 필수
+  - [x] 기록 저장(원문 NULL, pending) + 업로드 사용 완료 + 받아쓰기 작업 등록 (한 트랜잭션)
+  - [x] 같은 키 재전송 → 첫 응답 / 같은 파일 재사용 409 `AUDIO_ALREADY_USED` / 만료 410
+- [x] DB: 음성 초기값 강제 (INSERT 트리거), `audio_path` UNIQUE, `transcript_empty`, `processing_error`
+- [x] DB: 원문은 최초 받아쓰기만 저장 (`app.writer`, 트랜잭션 한정), 버전 1 유지, 이후 원문 변경 금지
+- [x] 받아쓰기 전 수정 409, 음성 글 수정 2000자
 - [ ] 👤 Flutter: 1회 탭 녹음, 3분 자동 종료, 2초 미만 취소, 전화 수신 일시정지, 마이크 권한
 - [ ] 👤 Flutter: 오프라인 저장 → 연결 후 같은 `Idempotency-Key`로 전송
 
 ### 처리 작업 (워커)
-- [ ] `transcribe_record`: Storage에서 음성 → STT → 원문 저장 → 분류 작업 등록
+- [x] `transcribe_record`: Storage에서 음성 → 형식·길이 확인(mutagen) → STT → 원문 저장 + 분류 작업 등록 (한 트랜잭션)
+  - [x] 무음 → 원문 `''` + `transcript_empty`, 분류 없이 미분류
+  - [x] 파일 없음·손상·형식·길이 → 영구 실패 코드, STT 미설정 → `STT_NOT_CONFIGURED`, STT 오류 → 재시도 후 `STT_FAILED`
+  - [x] 기록당 활성 받아쓰기 작업 1개 (부분 UNIQUE)
+- [ ] 👤 실제 STT 연동 후 "1분 녹음 → 10초 안에 저장 확인 카드" 측정
 - [x] `classify_record`: 분류 → `record_items` 저장 (52항목 코드만, 확신 낮으면 미분류)
   - [x] 결과 저장 시 행 잠금 + `text_version` 비교 → 다르면 버림(`superseded`)
   - [x] 이전 버전 작업이 늦게 끝나거나 실패해도 최신 기록 상태 변경 안 함
-- [x] 실패 시 `processing_status=failed`, 원문은 유지
+- [x] 실패 시 `processing_status=failed` + `processing_error`, 원문·버전·음성 파일 유지
 - [x] 작업을 멱등하게 (두 번 실행돼도 결과 같게)
 
 ### 상태·재시도 — A-HOME-004/005
 - [x] `GET /v1/records/{id}/processing` — 진행 상태 + 분류 결과 (저장 확인 카드용)
 - [x] `POST /v1/records/{id}/reclassify` — 작성자만, 분석 중·사용자 분류면 409
+  - [x] 실패한 단계부터: 받아쓰기 실패 → 받아쓰기부터 / 분류 실패 → 분류만
+  - [x] 파일 문제 → 409 `AUDIO_INVALID` (새 녹음 안내), STT 미설정 상태 → 503
+- [x] 처리 상태에 `stage`(transcription / classification / done) 계산값
 - [x] 홈 최근 기록 3건 `GET /v1/parents/{id}/records?status=normal&limit=3`
 - [x] 기록 상세 `GET /v1/records/{id}` (원문·분류·수정 여부)
 
@@ -230,7 +250,7 @@
 ### 기록함 — A-LIST / A-DET
 - [ ] `GET /v1/parents/{id}/records` — 커서, 필터(영역·작성자·기간·출처·입력 방식) 추가 (최신순·`limit`·`status`는 완료)
 - [x] `GET /v1/records/{id}` — 상세 (2단계에서 완료)
-- [ ] `GET /v1/records/{id}/audio` — 재생용 서명 URL
+- [x] `GET /v1/records/{id}/audio` — 재생용 서명 URL (5분, 2단계에서 앞당김)
 - [x] `PATCH /v1/records/{id}` — 작성자만, 수정 전 상태를 `record_versions`에 (한 트랜잭션, 2단계에서 앞당김)
   - [x] 원문·음성·`recorded_at` 등 수정 시도 → 400 `IMMUTABLE_FIELD` (POL-02)
   - [x] 사용자 직접 분류: 52항목 중 선택만 (`[]` = 미분류), AI보다 우선
@@ -311,6 +331,10 @@
 - [ ] 실제 동의 문구 발행 (`consent_documents`, 더미 금지)
 - [ ] `survey_items` 52항목을 최신 공식 조사표와 1회 대조 (현재 legacy 버전)
 - [ ] Dockerfile — API 서버·워커 같은 이미지, 실행 명령만 다르게
+- [ ] 배포 순서: 워커 중지 → 마이그레이션 → 새 워커 시작 (lease 없는 이전 워커와 섞이지 않게)
+- [ ] 워커 개수 결정 (긴 받아쓰기가 대기열을 막지 않게, 여러 개 동시 실행 가능)
+- [ ] 운영 `AI_PROVIDER=real` 필수 — AI 합치기 전에는 운영 서버·워커가 시작 안 됨 (의도)
+- [ ] 동의 철회·기록 삭제 시 음성 파일도 삭제
 - [ ] HTTPS, CORS(웹 도메인만), 로그·오류 모니터링
 - [ ] 성능 확인: 음성 1분 → 10초, 현황판 3초
 - [ ] 권한 테스트 보강 (TS-7: 역할별·타 가족 접근·마지막 관리자)

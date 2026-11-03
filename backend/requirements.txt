@@ -6,6 +6,7 @@ pydantic-settings==2.16.0
 supabase==2.33.0
 httpx==0.28.1
 python-multipart==0.0.32
+mutagen==1.47.0
 
 # 개발·테스트
 pytest==9.1.1

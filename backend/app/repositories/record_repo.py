@@ -7,6 +7,7 @@ RECORD_COLUMNS = """
     r.input_type::text AS input_type, r.source::text AS source,
     r.status::text AS status,
     r.processing_status::text AS processing_status,
+    r.processing_error, r.transcript_empty,
     r.classification_status::text AS classification_status,
     r.classified_by::text AS classified_by,
     r.text_version, r.original_text, r.current_text,
@@ -37,20 +38,27 @@ def insert_record(
     source: str,
     text_value: str | None,
     recorded_at,
-    occurred_at
+    occurred_at,
+    audio_path: str | None = None,
+    audio_duration_seconds: int | None = None
 ) -> dict:
-    """original_text = current_text. text_version: 트리거가 1로 고정"""
+    """original_text = current_text. text_version: 트리거가 1로 고정
+
+    voice: 원문·현재 글 NULL, pending (트리거가 강제)
+    """
     return dict(db.execute(
         text("""
             INSERT INTO records (
                 parent_id, author_id, input_type, source,
-                original_text, current_text, recorded_at, occurred_at
+                original_text, current_text, recorded_at, occurred_at,
+                audio_path, audio_duration_seconds
             )
             VALUES (
                 :parent_id, :author_id,
                 CAST(:input_type AS input_type_enum),
                 CAST(:source AS record_source_enum),
-                :text, :text, COALESCE(:recorded_at, now()), :occurred_at
+                :text, :text, COALESCE(:recorded_at, now()), :occurred_at,
+                :audio_path, :audio_duration_seconds
             )
             RETURNING id, text_version
         """),
@@ -61,7 +69,9 @@ def insert_record(
             "source": source,
             "text": text_value,
             "recorded_at": recorded_at,
-            "occurred_at": occurred_at
+            "occurred_at": occurred_at,
+            "audio_path": audio_path,
+            "audio_duration_seconds": audio_duration_seconds
         }
     ).mappings().one())
 
@@ -109,14 +119,21 @@ def list_records(db: Session, parent_id: str, status: str | None, limit: int):
     ).mappings().all()
 
 
-def set_processing_status(db: Session, record_id: str, status: str):
+def set_processing_status(
+    db: Session,
+    record_id: str,
+    status: str,
+    error: str | None = None
+):
+    """error: failed 일 때만 (DB CHECK). 그 외 상태 → 오류 코드 비움"""
     db.execute(
         text("""
             UPDATE records
-            SET processing_status = CAST(:status AS processing_status_enum)
+            SET processing_status = CAST(:status AS processing_status_enum),
+                processing_error = :error
             WHERE id = :id
         """),
-        {"id": record_id, "status": status}
+        {"id": record_id, "status": status, "error": error}
     )
 
 
@@ -160,7 +177,8 @@ def set_classification(
             SET classification_status =
                     CAST(:classification_status AS classification_status_enum),
                 classified_by = CAST(:classified_by AS set_by_enum),
-                processing_status = CAST(:processing_status AS processing_status_enum)
+                processing_status = CAST(:processing_status AS processing_status_enum),
+                processing_error = NULL
             WHERE id = :id
         """),
         {
@@ -224,3 +242,36 @@ def insert_version(
             "occurred_at": occurred_at
         }
     )
+
+
+def save_transcript(
+    db: Session,
+    record_id: str,
+    transcript: str,
+    duration_seconds: int,
+    processing_status: str
+):
+    """최초 받아쓰기. 트리거 허용 조건: app.writer = transcription (이 트랜잭션 한정)
+
+    원문 = 현재 글 동시 저장, text_version 유지. '' → transcript_empty
+    """
+    db.execute(text("SELECT set_config('app.writer', 'transcription', true)"))
+    db.execute(
+        text("""
+            UPDATE records
+            SET original_text = :text,
+                current_text = :text,
+                transcript_empty = (:text = ''),
+                audio_duration_seconds = :duration,
+                processing_status = CAST(:status AS processing_status_enum),
+                processing_error = NULL
+            WHERE id = :id
+        """),
+        {
+            "id": record_id,
+            "text": transcript,
+            "duration": duration_seconds,
+            "status": processing_status
+        }
+    )
+    db.execute(text("SELECT set_config('app.writer', '', true)"))

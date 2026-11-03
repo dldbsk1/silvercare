@@ -1,4 +1,4 @@
-"""개발용 AI Mock (키워드 분류)
+"""개발용 AI Mock (키워드 분류, 고정 받아쓰기)
 
 - 코드: 실제 DB survey_items 52항목만 사용 (tests/integration에서 검증)
 - 키워드 여러 개 일치 → 여러 항목
@@ -8,10 +8,13 @@
   - [ai-low]     → 기준 미만 확신도 (걸러짐 → 미분류)
   - [ai-invalid] → 52항목에 없는 코드 (걸러짐)
 """
-from app.ai.interfaces import ItemClassification
+from app.ai.interfaces import ItemClassification, Transcript
 
 
 MOCK_CONFIDENCE = 0.9
+
+# 실제 음성 → 고정 문장 (분류까지 이어지는지 확인용, phys_eating)
+MOCK_TRANSCRIPT = "[mock 받아쓰기] 식사는 혼자 하셨어요."
 
 KEYWORDS: dict[str, tuple[str, ...]] = {
     "phys_dressing": ("옷 입", "옷을 입", "옷 갈아"),
@@ -54,3 +57,8 @@ class MockRecordClassifier:
             for code, words in KEYWORDS.items()
             if any(word in text for word in words)
         ]
+
+
+class MockSpeechToText:
+    def transcribe(self, audio: bytes, content_type: str) -> Transcript:
+        return Transcript(text=MOCK_TRANSCRIPT)

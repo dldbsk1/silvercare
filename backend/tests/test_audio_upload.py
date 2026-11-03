@@ -8,7 +8,7 @@ from app.core.security import AuthUser, get_auth_user
 from app.db import storage
 from app.db.session import get_db
 from app.main import app
-from app.repositories import family_repo, user_repo
+from app.repositories import family_repo, upload_repo, user_repo
 from app.services import consent_service
 from app.services.idempotency import hash_request
 
@@ -27,6 +27,7 @@ class FakeSession:
 def client(monkeypatch):
     monkeypatch.setattr(user_repo, "ensure_user", lambda *args: None)
     monkeypatch.setattr(consent_service, "ensure_completed", lambda *args: None)
+    monkeypatch.setattr(upload_repo, "insert_upload", lambda *args: "upload-1")
     monkeypatch.setattr(
         storage, "create_signed_upload_url",
         lambda bucket, path: {
@@ -57,6 +58,7 @@ def test_writer_gets_upload_url(client, monkeypatch):
     assert data["audio_path"].startswith(f"{PARENT_ID}/{USER_ID}/")
     assert data["audio_path"].endswith(".m4a")
     assert data["token"] == "t"
+    assert data["upload_id"] == "upload-1"
 
 
 def test_viewer_cannot_upload(client, monkeypatch):

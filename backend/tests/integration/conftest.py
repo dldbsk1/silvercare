@@ -147,3 +147,39 @@ def join_family(db, client, consent_docs, parent_id, role):
         p=parent_id, u=other, role=role
     )
     return other
+
+
+def claim_job(db, record_id, job_type, text_version=None):
+    """해당 기록의 작업을 워커처럼 가져옴 (running + 새 lease). 다시 부르면 회수와 같음
+
+    대기·실행 중 작업 우선 (테스트 트랜잭션 안에서는 created_at이 같음)
+    """
+    from app.workers.worker import to_job
+
+    rows = run_sql(
+        db,
+        """
+            UPDATE jobs
+            SET status = 'running', locked_at = now(), attempts = attempts + 1,
+                lease_token = gen_random_uuid(), updated_at = now()
+            WHERE id = (
+                SELECT id FROM jobs
+                WHERE target_id = :id AND type = :type
+                  AND (CAST(:v AS int) IS NULL OR (payload->>'text_version')::int = CAST(:v AS int))
+                ORDER BY status IN ('queued', 'running') DESC, created_at DESC
+                LIMIT 1
+            )
+            RETURNING id, type, payload, lease_token, attempts, max_attempts
+        """,
+        id=record_id, type=job_type, v=text_version
+    )
+    assert rows, f"작업 없음 {job_type} {record_id}"
+    return to_job(rows[0]._mapping)
+
+
+def fail_final(db, job, code=None):
+    """재시도 소진·영구 실패 처리 (워커와 같은 경로)"""
+    from app.workers import worker
+    from app.workers.tasks import TASKS
+
+    worker.fail_job(db, TASKS[job.type], job, code, code or "test failure")

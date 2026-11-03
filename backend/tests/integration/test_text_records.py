@@ -7,7 +7,7 @@ from sqlalchemy.exc import DBAPIError
 from app.ai.interfaces import ItemClassification
 from app.workers.tasks import JobSuperseded
 from app.workers.tasks import records as record_tasks
-from tests.integration.conftest import join_family, run_sql, sql_scalar
+from tests.integration.conftest import claim_job, fail_final, join_family, run_sql, sql_scalar
 
 
 def create(client, parent_id, text="식사: 반찬을 작게 잘라 드려야 드셨어요.", **extra):
@@ -28,12 +28,12 @@ def jobs_of(db, record_id):
     )
 
 
-def payload(record_id, version):
-    return {"record_id": record_id, "text_version": version}
-
-
 def run_classify(db, record_id, version):
-    record_tasks.classify_record(db, payload(record_id, version))
+    record_tasks.classify_record(db, claim_job(db, record_id, "classify_record", version))
+
+
+def fail_classify(db, record_id, version):
+    fail_final(db, claim_job(db, record_id, "classify_record", version))
 
 
 def processing(client, record_id):
@@ -216,7 +216,7 @@ def test_ai_failure_keeps_original_then_reclassify(client, db, parent_id):
     assert processing(client, record_id)["processing_status"] == "processing"
 
     # 재시도 소진 → on_failure
-    record_tasks.mark_record_failed(db, payload(record_id, 1))
+    fail_classify(db, record_id, 1)
     data = processing(client, record_id)
     assert data["processing_status"] == "failed"
     assert data["original_text"] == "[ai-fail] 밥"
@@ -261,7 +261,7 @@ def test_edit_during_classification_supersedes_old_job(client, db, parent_id):
     # 이전 버전 작업이 늦게 실행/실패 → 결과 버림, 상태 변경 없음
     with pytest.raises(JobSuperseded):
         run_classify(db, record_id, 1)
-    record_tasks.mark_record_failed(db, payload(record_id, 1))
+    fail_classify(db, record_id, 1)
     assert processing(client, record_id)["processing_status"] == "pending"
 
     run_classify(db, record_id, 2)
@@ -317,7 +317,15 @@ def test_user_classification_priority(client, db, parent_id):
     assert data["classified_by"] == "user" and len(data["items"]) == 2
     assert len(jobs_of(db, record_id)) == 1
 
-    # 남아 있던 AI 작업 → 사용자 분류 덮어쓰기 금지
+    # 남아 있던 AI 작업 (최신 버전) → 사용자 분류 덮어쓰기 금지
+    run_sql(
+        db,
+        """
+            INSERT INTO jobs (type, payload, target_type, target_id)
+            VALUES ('classify_record', CAST(:payload AS jsonb), 'record', :id)
+        """,
+        payload=f'{{"record_id": "{record_id}", "text_version": 2}}', id=record_id
+    )
     with pytest.raises(JobSuperseded):
         run_classify(db, record_id, 2)
 
@@ -369,7 +377,7 @@ def test_only_author_can_edit_or_reclassify(client, db, consent_docs, parent_id)
 
     assert client.get(f"/v1/records/{record_id}").status_code == 200
     assert client.patch(f"/v1/records/{record_id}", json={"current_text": "남이 고침"}).status_code == 403
-    record_tasks.mark_record_failed(db, payload(record_id, 1))
+    fail_classify(db, record_id, 1)
     assert client.post(f"/v1/records/{record_id}/reclassify").status_code == 403
 
 

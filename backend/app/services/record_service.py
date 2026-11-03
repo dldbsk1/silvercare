@@ -1,23 +1,40 @@
-"""기록 작성·조회·수정·재분류 (A-HOME-002~005, A-HOME-009, A-DET-001/002)
+"""기록 작성·조회·수정·재처리 (A-HOME-001~005, A-HOME-009, A-DET-001/002)
 
 - 트랜잭션: 라우터에서 시작, 여기선 그 안에서 실행
-- 기록 저장 + 분류 작업 등록 → 같은 트랜잭션
+- 기록 저장 + 작업 등록 (받아쓰기·분류) → 같은 트랜잭션
+- 잠금 순서: records 잠금 → jobs INSERT만 (기존 작업 행 잠금 X → 워커와 교착 없음)
 - 기록 없음 / 다른 가족 기록 → 404 (존재 여부 숨김)
-- 수정·재분류: 작성자 본인 + admin·writer
+- 수정·재처리: 작성자 본인 + admin·writer
 """
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
-from app.repositories import record_repo, survey_repo
-from app.schemas.records import IMMUTABLE_FIELDS, RecordUpdateIn, TextRecordIn
-from app.services import classification_service
+from app.ai.provider import stt_configured
+from app.core.config import settings
+from app.core.errors import AppError, service_unavailable
+from app.db import storage
+from app.repositories import record_repo, survey_repo, upload_repo
+from app.schemas.records import (
+    IMMUTABLE_FIELDS,
+    TEXT_MAX_LENGTH,
+    VOICE_TEXT_MAX_LENGTH,
+    RecordUpdateIn,
+    TextRecordIn,
+    VoiceRecordIn,
+)
+from app.services import (
+    audio_upload_service,
+    classification_service,
+    transcription_service,
+)
 from app.services.access import ParentAccess, ensure_write, get_parent_access
 
 
 # 기기 시계 오차 허용
 CLOCK_SKEW = timedelta(minutes=5)
+
+PLAYBACK_URL_EXPIRES_SECONDS = 5 * 60
 
 
 # ── 공통 ──
@@ -44,6 +61,14 @@ def ensure_author(access: ParentAccess, record):
         )
 
 
+def stage_of(record) -> str:
+    if record["input_type"] == "voice" and record["original_text"] is None:
+        return "transcription"
+    if record["processing_status"] != "completed":
+        return "classification"
+    return "done"
+
+
 def to_list_item(record, user_id: str) -> dict:
     return {
         "id": str(record["id"]),
@@ -54,8 +79,10 @@ def to_list_item(record, user_id: str) -> dict:
         "source": record["source"],
         "status": record["status"],
         "processing_status": record["processing_status"],
+        "stage": stage_of(record),
         "classification_status": record["classification_status"],
         "current_text": record["current_text"],
+        "transcript_empty": record["transcript_empty"],
         "is_edited": record["text_version"] > 1,
         "areas": list(record["areas"]),
         "recorded_at": record["recorded_at"],
@@ -67,6 +94,7 @@ def to_detail(db: Session, record, user_id: str) -> dict:
     return {
         **to_list_item(record, user_id),
         "original_text": record["original_text"],
+        "processing_error": record["processing_error"],
         "classified_by": record["classified_by"],
         "text_version": record["text_version"],
         "audio_duration_seconds": record["audio_duration_seconds"],
@@ -112,6 +140,31 @@ def create_text(db: Session, access: ParentAccess, body: TextRecordIn) -> dict:
     return to_detail(db, record, access.user_id)
 
 
+def create_voice(db: Session, access: ParentAccess, body: VoiceRecordIn) -> dict:
+    """업로드 확인 → 기록 저장 (원문 NULL) → 업로드 사용 완료 → 받아쓰기 작업 (한 트랜잭션)"""
+    check_times(body.recorded_at, body.occurred_at)
+
+    upload = audio_upload_service.take_upload(db, access, str(body.upload_id))
+
+    created = record_repo.insert_record(
+        db,
+        parent_id=access.parent_id,
+        author_id=access.user_id,
+        input_type="voice",
+        source=body.source,
+        text_value=None,
+        recorded_at=body.recorded_at,
+        occurred_at=body.occurred_at,
+        audio_path=upload["audio_path"],
+        audio_duration_seconds=body.duration_seconds
+    )
+    upload_repo.consume(db, str(upload["id"]), str(created["id"]))
+    transcription_service.enqueue_transcription(db, created["id"])
+
+    record = record_repo.get_record(db, created["id"])
+    return to_detail(db, record, access.user_id)
+
+
 # ── 조회 ──
 
 def list_records(
@@ -135,7 +188,11 @@ def get_processing(db: Session, user_id: str, record_id: str) -> dict:
     _, record = record_access(db, user_id, record_id)
     return {
         "record_id": str(record["id"]),
+        "input_type": record["input_type"],
+        "stage": stage_of(record),
         "processing_status": record["processing_status"],
+        "processing_error": record["processing_error"],
+        "transcript_empty": record["transcript_empty"],
         "classification_status": record["classification_status"],
         "classified_by": record["classified_by"],
         "text_version": record["text_version"],
@@ -145,15 +202,41 @@ def get_processing(db: Session, user_id: str, record_id: str) -> dict:
     }
 
 
-# ── 재분류 ──
+def get_audio_url(db: Session, user_id: str, record_id: str) -> dict:
+    """재생용 서명 URL (5분). 같은 가족이면 viewer 포함"""
+    _, record = record_access(db, user_id, record_id)
+    if record["audio_path"] is None:
+        raise AppError(404, "NOT_FOUND", "음성이 없는 기록이에요.")
+
+    return {
+        "url": storage.create_signed_download_url(
+            settings.STORAGE_AUDIO_BUCKET, record["audio_path"],
+            PLAYBACK_URL_EXPIRES_SECONDS
+        ),
+        "expires_in_seconds": PLAYBACK_URL_EXPIRES_SECONDS,
+    }
+
+
+# ── 재처리 ──
 
 def reclassify(db: Session, user_id: str, record_id: str) -> dict:
-    """failed·completed → pending + 작업 등록. 분석 중·사용자 분류 → 409"""
+    """실패·완료 기록 다시 처리. 실패한 단계부터
+
+    - 받아쓰기 실패: 파일 문제 → 409 AUDIO_INVALID (새 녹음 안내)
+                     STT 미설정 → 지금도 미설정이면 503, 설정됨 → 받아쓰기부터
+                     그 외 → 받아쓰기부터
+    - 분류 단계: 분류만 (원문·버전 그대로). 사용자 분류 → 409
+    - 처리 중 → 409
+    """
     access, record = record_access(db, user_id, record_id, for_update=True)
     ensure_author(access, record)
 
     if record["processing_status"] in ("pending", "processing"):
-        raise AppError(409, "ALREADY_PROCESSING", "분류하고 있어요.")
+        raise AppError(409, "ALREADY_PROCESSING", "처리하고 있어요.")
+
+    if stage_of(record) == "transcription":
+        return retry_transcription(db, user_id, record)
+
     if record["classified_by"] == "user":
         raise AppError(
             409, "USER_CLASSIFIED", "직접 고친 분류가 있어 다시 분류하지 않아요."
@@ -163,6 +246,24 @@ def reclassify(db: Session, user_id: str, record_id: str) -> dict:
     classification_service.enqueue_classification(
         db, record_id, record["text_version"]
     )
+    return get_processing(db, user_id, record_id)
+
+
+def retry_transcription(db: Session, user_id: str, record) -> dict:
+    record_id = str(record["id"])
+    error = record["processing_error"]
+
+    if error in transcription_service.AUDIO_PROBLEMS:
+        raise AppError(
+            409, "AUDIO_INVALID",
+            "녹음 파일에 문제가 있어요. 다시 녹음하거나 글로 남겨 주세요.",
+            details={"reason": error, "action": "re_record"}
+        )
+    if error == transcription_service.STT_NOT_CONFIGURED and not stt_configured():
+        raise service_unavailable("stt")
+
+    record_repo.set_processing_status(db, record_id, "pending")
+    transcription_service.enqueue_transcription(db, record_id)
     return get_processing(db, user_id, record_id)
 
 
@@ -179,13 +280,13 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
 
     access, record = record_access(db, user_id, record_id, for_update=True)
     ensure_author(access, record)
+    ensure_transcribed(record)
 
     sent = body.model_fields_set
     fields = {}
 
     if "current_text" in sent and body.current_text != record["current_text"]:
-        if record["current_text"] is None:
-            raise AppError(409, "ALREADY_PROCESSING", "받아쓰기가 끝난 뒤 고칠 수 있어요.")
+        check_text_length(record, body.current_text)
         fields["current_text"] = body.current_text
 
     if "source" in sent and body.source != record["source"]:
@@ -240,6 +341,27 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
         classification_service.enqueue_classification(db, record_id, text_version)
 
     return to_detail(db, record_repo.get_record(db, record_id), user_id)
+
+
+def ensure_transcribed(record):
+    """받아쓰기 전 음성 기록 → 수정 불가 (수정 이력에 남길 글 없음)"""
+    if stage_of(record) != "transcription":
+        return
+    if record["processing_status"] == "failed":
+        raise AppError(
+            409, "TRANSCRIPTION_FAILED",
+            "받아쓰기에 실패한 기록은 고칠 수 없어요. 다시 처리하거나 새로 녹음해 주세요."
+        )
+    raise AppError(409, "ALREADY_PROCESSING", "받아쓰기가 끝난 뒤 고칠 수 있어요.")
+
+
+def check_text_length(record, value: str):
+    limit = VOICE_TEXT_MAX_LENGTH if record["input_type"] == "voice" else TEXT_MAX_LENGTH
+    if len(value) > limit:
+        raise AppError(
+            422, "VALIDATION_ERROR", f"{limit}자까지 쓸 수 있어요.",
+            details={"fields": ["current_text"], "max_length": limit}
+        )
 
 
 def check_update_fields(body: RecordUpdateIn):

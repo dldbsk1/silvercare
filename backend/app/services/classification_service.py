@@ -17,6 +17,7 @@ from app.workers.queue import enqueue
 MIN_CONFIDENCE = 0.5
 
 CLASSIFY_JOB = "classify_record"
+CLASSIFY_FAILED = "CLASSIFY_FAILED"
 
 
 class StaleClassification(Exception):
@@ -91,8 +92,11 @@ def save_result(
     )
 
 
-def mark_failed(db: Session, record_id: str, text_version: int):
-    """재시도 소진 → failed. 이전 버전 작업·사용자 분류 기록 → 변경 없음"""
+def mark_failed(db: Session, record_id: str, text_version: int, code: str):
+    """재시도 소진 → failed + 코드. 이전 버전 작업·사용자 분류 기록 → 변경 없음
+
+    원문·현재 글·text_version·음성 파일 그대로 → 재처리 시 분류만
+    """
     record = record_repo.get_record(db, record_id, for_update=True)
     if record is None:
         return
@@ -102,4 +106,4 @@ def mark_failed(db: Session, record_id: str, text_version: int):
     except StaleClassification:
         return
 
-    record_repo.set_processing_status(db, record_id, "failed")
+    record_repo.set_processing_status(db, record_id, "failed", code)

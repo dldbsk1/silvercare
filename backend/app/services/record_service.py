@@ -29,12 +29,16 @@ from app.services import (
     transcription_service,
 )
 from app.services.access import ParentAccess, ensure_write, get_parent_access
+from app.services.patch_rules import check_patch
 
 
 # 기기 시계 오차 허용
 CLOCK_SKEW = timedelta(minutes=5)
 
 PLAYBACK_URL_EXPIRES_SECONDS = 5 * 60
+
+# 수정 칸 → 이력 changed_fields 이름
+VERSION_FIELDS = {"current_text": "text", "source": "source", "occurred_at": "occurred_at"}
 
 
 # ── 공통 ──
@@ -74,12 +78,14 @@ def to_list_item(record, user_id: str) -> dict:
         "id": str(record["id"]),
         "parent_id": str(record["parent_id"]),
         "author_id": str(record["author_id"]),
+        "author_name": record["author_name"],
         "is_mine": str(record["author_id"]) == user_id,
         "input_type": record["input_type"],
         "source": record["source"],
         "status": record["status"],
         "processing_status": record["processing_status"],
         "stage": stage_of(record),
+        "processing_error": record["processing_error"],
         "classification_status": record["classification_status"],
         "current_text": record["current_text"],
         "transcript_empty": record["transcript_empty"],
@@ -94,7 +100,6 @@ def to_detail(db: Session, record, user_id: str) -> dict:
     return {
         **to_list_item(record, user_id),
         "original_text": record["original_text"],
-        "processing_error": record["processing_error"],
         "classified_by": record["classified_by"],
         "text_version": record["text_version"],
         "audio_duration_seconds": record["audio_duration_seconds"],
@@ -276,13 +281,12 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
     - 글만 변경 + AI 분류 기록 → 이전 분류 삭제 + 새 버전 분류 작업 등록
     - 글만 변경 + 사용자 분류 기록 → 사용자 분류 유지
     """
-    check_update_fields(body)
+    sent = check_patch(body, IMMUTABLE_FIELDS, nullable={"occurred_at"})
 
     access, record = record_access(db, user_id, record_id, for_update=True)
     ensure_author(access, record)
     ensure_transcribed(record)
 
-    sent = body.model_fields_set
     fields = {}
 
     if "current_text" in sent and body.current_text != record["current_text"]:
@@ -313,13 +317,20 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
     if not fields and new_codes is None:
         return to_detail(db, record, user_id)
 
+    # 이력: 수정 전 상태 + 실제로 바뀐 칸 (기록 행 잠금 안에서 순번 결정)
+    changed = [VERSION_FIELDS[f] for f in fields]
+    if new_codes is not None:
+        changed.append("item_codes")
+
     record_repo.insert_version(
         db, record_id,
         text_value=record["current_text"],
         edited_by=user_id,
         source=record["source"],
         item_codes=old_codes,
-        occurred_at=record["occurred_at"]
+        occurred_at=record["occurred_at"],
+        classified_by=record["classified_by"],
+        changed_fields=changed
     )
 
     text_version = record["text_version"]
@@ -364,29 +375,52 @@ def check_text_length(record, value: str):
         )
 
 
-def check_update_fields(body: RecordUpdateIn):
-    extra = set(body.model_extra or {})
+# ── 기록지에서 제외 (A-DET-003) ──
 
-    immutable = extra & IMMUTABLE_FIELDS
-    if immutable:
-        raise AppError(
-            400, "IMMUTABLE_FIELD", "바꿀 수 없는 항목이 있어요.",
-            details={"fields": sorted(immutable)}
-        )
-    if extra:
-        raise AppError(
-            422, "VALIDATION_ERROR", "알 수 없는 항목이 있어요.",
-            details={"fields": sorted(extra)}
-        )
+def set_status(db: Session, user_id: str, record_id: str, status: str) -> dict:
+    """normal ↔ excluded. 작성자만, 같은 상태 → 변경 없이 200. 삭제·수정 이력 아님"""
+    access, record = record_access(db, user_id, record_id, for_update=True)
+    ensure_author(access, record)
 
-    sent = body.model_fields_set
-    if not sent:
-        raise AppError(400, "INVALID_REQUEST", "바꿀 내용이 없어요.")
+    if record["status"] != status:
+        record_repo.set_status(db, record_id, status)
+        record = record_repo.get_record(db, record_id)
 
-    nullable = {"occurred_at"}
-    for field in sent - nullable:
-        if getattr(body, field) is None:
-            raise AppError(
-                422, "VALIDATION_ERROR", "비울 수 없는 항목이에요.",
-                details={"fields": [field]}
-            )
+    return to_detail(db, record, user_id)
+
+
+# ── 수정 이력 ──
+
+def get_versions(db: Session, user_id: str, record_id: str) -> dict:
+    """최신 수정 먼저 (version DESC). changed: 저장 시점 기록값"""
+    _, record = record_access(db, user_id, record_id)
+    items = record_repo.get_items(db, record_id)
+
+    return {
+        "original_text": record["original_text"],
+        "current": {
+            "text": record["current_text"],
+            "source": record["source"],
+            "occurred_at": record["occurred_at"],
+            "item_codes": [i["item_code"] for i in items],
+            "classified_by": record["classified_by"],
+        },
+        "history": [
+            {
+                "version": v["version"],
+                "edited_by": str(v["edited_by"]),
+                "edited_by_name": v["edited_by_name"],
+                "is_mine": str(v["edited_by"]) == user_id,
+                "edited_at": v["edited_at"],
+                "changed": list(v["changed_fields"]),
+                "before": {
+                    "text": v["text"],
+                    "source": v["source_snapshot"],
+                    "occurred_at": v["occurred_at_snapshot"],
+                    "item_codes": list(v["item_codes_snapshot"] or []),
+                    "classified_by": v["classified_by_snapshot"],
+                },
+            }
+            for v in record_repo.list_versions(db, record_id)
+        ],
+    }

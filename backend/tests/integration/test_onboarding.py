@@ -16,10 +16,11 @@ def test_new_user_onboarding_state(client, user_id, consent_docs):
 
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["user"] == {"id": user_id, "login_type": "email"}
+    assert data["user"] == {"id": user_id, "login_type": "email", "display_name": None}
     assert data["onboarding"] == {
         "consents_completed": False,
         "missing_consents": ["health", "privacy", "service"],
+        "name_set": False,
         "parent_registered": False,
     }
     assert data["parent_ids"] == []

@@ -107,12 +107,15 @@ class RecordListItemOut(BaseModel):
     id: str
     parent_id: str
     author_id: str
+    # 작성자 표시 이름. 미설정 → null (앱: "가족")
+    author_name: str | None
     is_mine: bool
     input_type: str
     source: RecordSource
     status: RecordStatus
     processing_status: ProcessingStatus
     stage: Stage
+    processing_error: str | None
     classification_status: ClassificationStatus | None
     current_text: str | None
     transcript_empty: bool
@@ -124,7 +127,6 @@ class RecordListItemOut(BaseModel):
 
 class RecordOut(RecordListItemOut):
     original_text: str | None
-    processing_error: str | None
     classified_by: SetBy | None
     text_version: int
     audio_duration_seconds: int | None
@@ -147,3 +149,33 @@ class RecordProcessingOut(BaseModel):
     original_text: str | None
     current_text: str | None
     items: list[RecordItemOut]
+
+
+# ── 수정 이력 ──
+
+VersionField = Literal["text", "source", "occurred_at", "item_codes"]
+
+
+class RecordSnapshotOut(BaseModel):
+    text: str | None
+    source: RecordSource | None
+    occurred_at: datetime | None
+    item_codes: list[str]
+    classified_by: SetBy | None
+
+
+class RecordVersionOut(BaseModel):
+    # 사용자 수정 순번 (text_version과 별개)
+    version: int
+    edited_by: str
+    edited_by_name: str | None
+    is_mine: bool
+    edited_at: datetime
+    changed: list[VersionField]
+    before: RecordSnapshotOut
+
+
+class RecordVersionsOut(BaseModel):
+    original_text: str | None
+    current: RecordSnapshotOut
+    history: list[RecordVersionOut]

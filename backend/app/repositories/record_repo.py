@@ -12,7 +12,8 @@ RECORD_COLUMNS = """
     r.classified_by::text AS classified_by,
     r.text_version, r.original_text, r.current_text,
     r.audio_path, r.audio_duration_seconds,
-    r.recorded_at, r.occurred_at, r.created_at, r.updated_at
+    r.recorded_at, r.occurred_at, r.created_at, r.updated_at,
+    (SELECT u.display_name FROM users u WHERE u.id = r.author_id) AS author_name
 """
 
 # 영역 태그: 조사표 영역 순서 (신체 → 인지 → 행동변화 → 간호처치 → 재활)
@@ -218,29 +219,68 @@ def insert_version(
     edited_by: str,
     source: str,
     item_codes: list[str],
-    occurred_at
+    occurred_at,
+    classified_by: str | None,
+    changed_fields: list[str]
 ):
-    """수정 전 상태 스냅샷 (POL-02 수정 이력)"""
+    """수정 전 상태 스냅샷 (POL-02 수정 이력)
+
+    version: 기록당 순번. 호출 전 기록 행 잠금 필수 (UNIQUE(record_id, version)로 한 번 더 보장)
+    """
     db.execute(
         text("""
             INSERT INTO record_versions (
-                record_id, text, edited_by,
-                source_snapshot, item_codes_snapshot, occurred_at_snapshot
+                record_id, version, changed_fields, text, edited_by,
+                source_snapshot, item_codes_snapshot, occurred_at_snapshot,
+                classified_by_snapshot
             )
             VALUES (
-                :record_id, :text, :edited_by,
+                :record_id,
+                (SELECT COALESCE(max(version), 0) + 1
+                 FROM record_versions WHERE record_id = :record_id),
+                CAST(:changed AS text[]), :text, :edited_by,
                 CAST(:source AS record_source_enum),
-                CAST(:item_codes AS text[]), :occurred_at
+                CAST(:item_codes AS text[]), :occurred_at,
+                CAST(:classified_by AS set_by_enum)
             )
         """),
         {
             "record_id": record_id,
+            "changed": list(changed_fields),
             "text": text_value,
             "edited_by": edited_by,
             "source": source,
             "item_codes": list(item_codes),
-            "occurred_at": occurred_at
+            "occurred_at": occurred_at,
+            "classified_by": classified_by
         }
+    )
+
+
+def list_versions(db: Session, record_id: str):
+    return db.execute(
+        text("""
+            SELECT rv.version, rv.changed_fields, rv.text, rv.edited_by, rv.edited_at,
+                   rv.source_snapshot::text AS source_snapshot,
+                   rv.item_codes_snapshot, rv.occurred_at_snapshot,
+                   rv.classified_by_snapshot::text AS classified_by_snapshot,
+                   u.display_name AS edited_by_name
+            FROM record_versions rv
+            LEFT JOIN users u ON u.id = rv.edited_by
+            WHERE rv.record_id = :id
+            ORDER BY rv.version DESC
+        """),
+        {"id": record_id}
+    ).mappings().all()
+
+
+def set_status(db: Session, record_id: str, status: str):
+    db.execute(
+        text("""
+            UPDATE records SET status = CAST(:status AS record_status_enum)
+            WHERE id = :id
+        """),
+        {"id": record_id, "status": status}
     )
 
 

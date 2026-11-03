@@ -66,3 +66,29 @@ def list_for_user(db: Session, user_id: str):
         {"user_id": user_id}
     ).mappings().all()
 
+
+
+def get_for_update(db: Session, parent_id: str):
+    return db.execute(
+        text(f"SELECT {PARENT_COLUMNS} FROM parents p WHERE p.id = :id FOR UPDATE"),
+        {"id": parent_id}
+    ).mappings().one()
+
+
+# 칸 → SET 식 (enum 형 변환)
+UPDATE_EXPRESSIONS = {
+    "nickname": "nickname = :nickname",
+    "age_band": "age_band = :age_band",
+    "apply_stage": "apply_stage = CAST(:apply_stage AS apply_stage_enum)",
+    "cohabiting": "cohabiting = :cohabiting",
+    "survey_date": "survey_date = :survey_date",
+    "judged_date": "judged_date = :judged_date",
+}
+
+
+def update_fields(db: Session, parent_id: str, fields: dict):
+    assignments = ", ".join(UPDATE_EXPRESSIONS[f] for f in fields)
+    db.execute(
+        text(f"UPDATE parents SET {assignments} WHERE id = :id"),
+        {"id": parent_id, **fields}
+    )

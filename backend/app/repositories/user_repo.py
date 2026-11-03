@@ -30,9 +30,16 @@ def ensure_user(
 def get_user(db: Session, user_id: str):
     return db.execute(
         text("""
-            SELECT id, login_type::text AS login_type, phone, created_at
+            SELECT id, login_type::text AS login_type, phone, display_name, created_at
             FROM users
             WHERE id = :id
         """),
         {"id": user_id}
     ).mappings().first()
+
+
+def set_display_name(db: Session, user_id: str, display_name: str):
+    db.execute(
+        text("UPDATE users SET display_name = :name WHERE id = :id"),
+        {"id": user_id, "name": display_name}
+    )

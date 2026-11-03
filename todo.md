@@ -12,6 +12,7 @@
 - [ ] 앱·웹 팀에 공유: 모든 경로가 `/v1` 아래로 이동 (`/auth/me` → `/v1/auth/me`)
 - [ ] API 명세서 4.2 수정: 음성 기록은 multipart 대신 "업로드 URL 발급(`upload_id`) → Storage 직접 업로드 → `upload_id` JSON 전달"
 - [ ] 앱 팀에 공유 (음성): 업로드 URL 응답 `upload_id`, 기록 생성은 `upload_id`만, 처리 상태 `stage`·`transcript_empty`·`processing_error`, 60초 지나면 조회 중단 + "처리 중" 안내
+- [ ] 앱 팀에 공유 (A-1): 가입 흐름 동의 → 이름 입력(`name_set`) → 부모님 등록, 화면 이름은 `author_name`(null → "가족"), 홈 처리 상태별 표시 기준, PATCH 오류 규칙
 - [ ] 앱 팀에 공유 (오류 코드): `AUDIO_ALREADY_USED`(409, `record_id`), `UPLOAD_EXPIRED`(410), `AUDIO_INVALID`(409, 새 녹음 안내), `TRANSCRIPTION_FAILED`(409), 음성 글 수정 2000자
 - [ ] AI 팀원에게 공유: STT는 `Transcript` 반환, 무음 = `""`, 오류는 예외(빈 글 금지), 미설정 = `SpeechToTextNotConfigured`, 5분 안에 끝나거나 타임아웃
 - [ ] AI 팀원에게 `backend/app/ai/interfaces.py` 공유하고 함수 모양 합의
@@ -25,7 +26,7 @@
 - [ ] STT·LLM 제공업체 선택 (Whisper / Clova / Google) — AI 팀원과
 - [ ] 백엔드 배포처 (Railway / Render / Fly.io)
 - [ ] 단톡방 원문을 외부 AI에 보낼 범위 (다른 가족 개인정보 포함, API 명세서 10장)
-- [ ] 가족 호칭 저장 위치 (기록 작성자 "나 · 형" 표시용 — `users`·`family_members`에 칸 없음, 6단계 가족 초대 전)
+- [x] 호칭: 부모님 = 관리자가 정한 공통 호칭(`parents.nickname`) / 사용자 = 본인이 정한 표시 이름(`users.display_name`). 관계 호칭(형·동생) 없음
 - [ ] 52항목 외 일반 분류(감정 등) 추가 여부 — 추가 시 52항목과 분리된 별도 테이블
 - [ ] 분류 확신도 기준값 (`MIN_CONFIDENCE = 0.5`) — AI 팀원과 조정
 
@@ -249,19 +250,22 @@
 
 ### 기록함 — A-LIST / A-DET
 - [ ] `GET /v1/parents/{id}/records` — 커서, 필터(영역·작성자·기간·출처·입력 방식) 추가 (최신순·`limit`·`status`는 완료)
-- [x] `GET /v1/records/{id}` — 상세 (2단계에서 완료)
+- [x] `GET /v1/records/{id}` — 상세 (2단계에서 완료), 작성자 표시 이름 `author_name`
 - [x] `GET /v1/records/{id}/audio` — 재생용 서명 URL (5분, 2단계에서 앞당김)
 - [x] `PATCH /v1/records/{id}` — 작성자만, 수정 전 상태를 `record_versions`에 (한 트랜잭션, 2단계에서 앞당김)
   - [x] 원문·음성·`recorded_at` 등 수정 시도 → 400 `IMMUTABLE_FIELD` (POL-02)
   - [x] 사용자 직접 분류: 52항목 중 선택만 (`[]` = 미분류), AI보다 우선
   - [x] 글 수정 → 이전 AI 분류 삭제 + 새 버전 분류 작업 등록 (한 트랜잭션)
-- [ ] `GET /v1/records/{id}/versions` — 수정 이력
-- [ ] `POST /v1/records/{id}/exclude` — 기록지에서 제외 (삭제 아님)
+- [x] `GET /v1/records/{id}/versions` — 수정 이력 (A-1, `migrations/004`)
+  - [x] 사용자 수정 순번 `version` (text_version과 별개), 저장 시점 `changed_fields`, 분류 주체 스냅샷
+- [x] `POST /v1/records/{id}/exclude`·`/include` — 기록지에서 제외·되돌리기 (작성자만, 삭제 아님, A-1)
 - [ ] `POST /v1/records/{id}/comments` — 다른 가족 기록에 댓글
 
 ### 홈 — A-HOME-006~009
 - [ ] `PUT /v1/parents/{id}/conditions/{date}` — 오늘 컨디션 (하루 1건, 이력은 DB 트리거)
-- [ ] `GET /v1/parents/{id}/home` — 최근 기록 3건, 받은 체크리스트, D-day, 컨디션
+- [x] `GET /v1/parents/{id}/home` — 공통 호칭, D-day, 최근 기록 3건 (제외 X, 실패 표시) (A-1)
+- [ ] 홈에 받은 체크리스트·컨디션 칸 추가 (B단계)
+- [x] D-day: 한국 시간 기준 계산, 연기 = 날짜 변경, 취소 = null (A-1)
 
 ### 가족 — A-FAM
 - [ ] `POST /v1/parents/{id}/invites` — admin, 7일 유효 링크 (DB에는 해시만)
@@ -293,7 +297,8 @@
 
 ### 웹 추가 — W-DASH-003/004, W-TL-003
 - [ ] `GET /v1/parents/{id}/next-actions` — 부족 항목 3개 + 관찰 예시
-- [ ] `PATCH /v1/parents/{id}` — admin만 부모님 정보·신청 단계 변경 (A-SET, W-DASH-004)
+- [x] `PATCH /v1/parents/{id}` — admin만 공통 호칭·신청 단계·조사일·판정일 (A-1, 조사 일정 1회분)
+- [ ] 재신청·다회차 조사 이력 (신청 이력 모델), 예정 판정일 칸 (필요 시)
 - [ ] `GET /v1/parents/{id}/timeline/{date}/records` — 그날 기록 펼치기
 
 ---
@@ -316,6 +321,7 @@
 - [ ] W-RNW-001/002 갱신 준비: 판정일 전후 건수, 새 기록지
 - [ ] W-LOG-002 QR 웹 로그인 — QR 세션 테이블·안전한 세션 전달 설계 먼저
 - [ ] A-SET-003 로그아웃·탈퇴 (관리자 탈퇴 시 관리자 넘기기), 삭제 요청 API
+- [x] `PATCH /v1/auth/me` — 본인 표시 이름 (A-1). `GET /v1/auth/me`에 `display_name`, `name_set`
 
 ### P2
 - [ ] A-FAM-003 가족별 최근 30일 기록 수

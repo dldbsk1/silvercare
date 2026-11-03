@@ -20,6 +20,7 @@ from app.schemas.records import (
     RecordProcessingOut,
     RecordStatus,
     RecordUpdateIn,
+    RecordVersionsOut,
     TextRecordIn,
     VoiceRecordIn,
 )
@@ -135,6 +136,30 @@ def get_record_audio(record_id: UUID, user: ConsentedUser, db: DbSession):
     """음성 재생 (A-DET-001). 5분 서명 URL, viewer 포함"""
     with db.begin():
         return {"data": record_service.get_audio_url(db, user.id, str(record_id))}
+
+
+@router.get(
+    "/records/{record_id}/versions",
+    response_model=DataResponse[RecordVersionsOut]
+)
+def get_record_versions(record_id: UUID, user: ConsentedUser, db: DbSession):
+    """수정 이력 (A-DET-002). 최신 수정 먼저, 같은 가족 모두 조회"""
+    with db.begin():
+        return {"data": record_service.get_versions(db, user.id, str(record_id))}
+
+
+@router.post("/records/{record_id}/exclude", response_model=DataResponse[RecordOut])
+def exclude_record(record_id: UUID, user: ConsentedUser, db: DbSession):
+    """기록지에서 제외 (A-DET-003). 작성자만, 삭제 아님, 반복 요청 → 200"""
+    with db.begin():
+        return {"data": record_service.set_status(db, user.id, str(record_id), "excluded")}
+
+
+@router.post("/records/{record_id}/include", response_model=DataResponse[RecordOut])
+def include_record(record_id: UUID, user: ConsentedUser, db: DbSession):
+    """제외 되돌리기. 작성자만"""
+    with db.begin():
+        return {"data": record_service.set_status(db, user.id, str(record_id), "normal")}
 
 
 @router.patch("/records/{record_id}", response_model=DataResponse[RecordOut])

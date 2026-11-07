@@ -13,6 +13,8 @@
 - [ ] API 명세서 4.2 수정: 음성 기록은 multipart 대신 "업로드 URL 발급(`upload_id`) → Storage 직접 업로드 → `upload_id` JSON 전달"
 - [ ] 앱 팀에 공유 (음성): 업로드 URL 응답 `upload_id`, 기록 생성은 `upload_id`만, 처리 상태 `stage`·`transcript_empty`·`processing_error`, 60초 지나면 조회 중단 + "처리 중" 안내
 - [ ] 앱 팀에 공유 (A-1): 가입 흐름 동의 → 이름 입력(`name_set`) → 부모님 등록, 화면 이름은 `author_name`(null → "가족"), 홈 처리 상태별 표시 기준, PATCH 오류 규칙
+- [ ] 앱 팀에 공유 (음성 저장 시점): 녹음·들어보기·다시 녹음·취소는 휴대폰 안에서만 (서버 호출 X). **분류 시작** 버튼에서만 업로드 URL → 파일 업로드 → 기록 생성 순서로 호출. 미리 업로드 금지. 중간 실패 시 같은 `Idempotency-Key`로 재시도. 기록 생성 뒤에는 삭제 X, "기록지에서 제외"만 가능하다고 안내
+- [ ] 앱 팀에 공유 (A-2): 목록 응답 `meta {next_cursor, has_more, total}`, 기본 `status=normal`(전체는 `all`), 조건 바뀌면 커서 버리고 첫 페이지부터, `INVALID_CURSOR` → 첫 페이지 다시, 재분류 중에는 이전 분류 안 보임
 - [ ] 앱 팀에 공유 (오류 코드): `AUDIO_ALREADY_USED`(409, `record_id`), `UPLOAD_EXPIRED`(410), `AUDIO_INVALID`(409, 새 녹음 안내), `TRANSCRIPTION_FAILED`(409), 음성 글 수정 2000자
 - [ ] AI 팀원에게 공유: STT는 `Transcript` 반환, 무음 = `""`, 오류는 예외(빈 글 금지), 미설정 = `SpeechToTextNotConfigured`, 5분 안에 끝나거나 타임아웃
 - [ ] AI 팀원에게 `backend/app/ai/interfaces.py` 공유하고 함수 모양 합의
@@ -249,7 +251,12 @@
 ## 6단계 · P1 (MVP)
 
 ### 기록함 — A-LIST / A-DET
-- [ ] `GET /v1/parents/{id}/records` — 커서, 필터(영역·작성자·기간·출처·입력 방식) 추가 (최신순·`limit`·`status`는 완료)
+- [x] `GET /v1/parents/{id}/records` — 기록함 (A-2)
+  - [x] 커서 (keyset `recorded_at, id`), HMAC 서명 + 조건 해시 → 조건 변경·위조 시 400 `INVALID_CURSOR`, `total`은 첫 페이지만
+  - [x] 필터: 영역·작성자·기간(한국 날짜, `recorded_at`)·출처·입력 방식·`status`(기본 normal, `all`)·`processing_status`·`classification_status`
+  - [x] 검색 `q`: `current_text`만 (원문 X), `%`·`_` 그대로, 50자
+  - [x] `is_edited` = 사용자 수정 이력 있음 (AI 분류 그대로 확정은 이력 X)
+  - [x] 분류 상태 ↔ 항목 일치 DB 검사 (`migrations/005`, 트랜잭션 끝 검사), 재분류 시 이전 분류 비움
 - [x] `GET /v1/records/{id}` — 상세 (2단계에서 완료), 작성자 표시 이름 `author_name`
 - [x] `GET /v1/records/{id}/audio` — 재생용 서명 URL (5분, 2단계에서 앞당김)
 - [x] `PATCH /v1/records/{id}` — 작성자만, 수정 전 상태를 `record_versions`에 (한 트랜잭션, 2단계에서 앞당김)
@@ -339,6 +346,7 @@
 - [ ] Dockerfile — API 서버·워커 같은 이미지, 실행 명령만 다르게
 - [ ] 배포 순서: 워커 중지 → 마이그레이션 → 새 워커 시작 (lease 없는 이전 워커와 섞이지 않게)
 - [ ] 워커 개수 결정 (긴 받아쓰기가 대기열을 막지 않게, 여러 개 동시 실행 가능)
+- [ ] 운영·스테이징 `CURSOR_SECRET` 필수 (없으면 시작 안 됨, 긴 임의 문자열)
 - [ ] 운영 `AI_PROVIDER=real` 필수 — AI 합치기 전에는 운영 서버·워커가 시작 안 됨 (의도)
 - [ ] 동의 철회·기록 삭제 시 음성 파일도 삭제
 - [ ] HTTPS, CORS(웹 도메인만), 로그·오류 모니터링

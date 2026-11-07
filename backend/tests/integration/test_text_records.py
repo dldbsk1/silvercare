@@ -203,9 +203,24 @@ def test_duplicate_job_run_no_duplicates(client, db, parent_id):
     record_id = create(client, parent_id, "밥 드시고 양치").json()["data"]["id"]
 
     run_classify(db, record_id, 1)
-    run_classify(db, record_id, 1)
+    # 회수된 작업 재실행 → 완료된 분류 유지 (superseded)
+    with pytest.raises(JobSuperseded):
+        run_classify(db, record_id, 1)
+    db.rollback()
 
     assert sql_scalar(db, "SELECT count(*) FROM record_items WHERE record_id = :id", id=record_id) == 2
+    assert processing(client, record_id)["processing_status"] == "completed"
+
+
+def test_failure_after_completion_keeps_result(client, db, parent_id):
+    record_id = create(client, parent_id, "밥 드시고 양치").json()["data"]["id"]
+    run_classify(db, record_id, 1)
+
+    fail_classify(db, record_id, 1)
+
+    data = processing(client, record_id)
+    assert data["processing_status"] == "completed"
+    assert data["classification_status"] == "classified" and len(data["items"]) == 2
 
 
 def test_ai_failure_keeps_original_then_reclassify(client, db, parent_id):
@@ -407,8 +422,9 @@ def test_recent_three_normal_only(client, db, parent_id):
     assert [r["current_text"] for r in data] == ["기록 3", "기록 2", "기록 1"]
     assert all(r["status"] == "normal" for r in data)
 
-    all_records = client.get(f"/v1/parents/{parent_id}/records").json()["data"]
-    assert len(all_records) == 5
+    # 기본 normal, all → 제외 포함
+    assert len(client.get(f"/v1/parents/{parent_id}/records").json()["data"]) == 4
+    assert len(client.get(f"/v1/parents/{parent_id}/records?status=all").json()["data"]) == 5
 
 
 def test_list_areas_and_empty(client, db, parent_id):

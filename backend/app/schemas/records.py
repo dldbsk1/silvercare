@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from uuid import UUID
@@ -8,6 +8,11 @@ from pydantic import AwareDatetime, BaseModel, Field, field_validator
 
 RecordSource = Literal["direct", "call", "kakao"]
 RecordStatus = Literal["normal", "excluded"]
+# 목록 조건. all → 사용 여부 무관
+RecordStatusFilter = Literal["normal", "excluded", "all"]
+InputType = Literal["voice", "text", "symptom", "kakao", "checklist"]
+# 조사표 영역 (uncat 제외)
+Area = Literal["physical", "cognitive", "behavior", "nursing", "rehab"]
 ProcessingStatus = Literal["pending", "processing", "completed", "failed"]
 ClassificationStatus = Literal["classified", "unclassified"]
 SetBy = Literal["ai", "user"]
@@ -93,6 +98,40 @@ class RecordUpdateIn(BaseModel):
         if codes is not None and len(codes) != len(set(codes)):
             raise ValueError("같은 항목이 두 번 들어 있어요.")
         return codes
+
+
+# ── 목록 (A-2) ──
+
+SEARCH_MAX_LENGTH = 50
+
+
+class RecordListQuery(BaseModel):
+    """기록함 목록 조건. 모두 AND. cursor·limit 외 조건이 바뀌면 이전 커서 → 400 INVALID_CURSOR
+
+    from / to: 기록한 날짜 (한국 시간), 양 끝 포함
+    """
+
+    area: Area | None = None
+    author_id: UUID | None = None
+    date_from: date | None = Field(None, alias="from")
+    date_to: date | None = Field(None, alias="to")
+    source: RecordSource | None = None
+    input_type: InputType | None = None
+    status: RecordStatusFilter = "normal"
+    processing_status: ProcessingStatus | None = None
+    # unclassified: 분석 완료 + 분류 항목 없음
+    classification_status: ClassificationStatus | None = None
+    # current_text만 (원문 X). 공백만 → 검색 없음
+    q: str | None = Field(None, max_length=SEARCH_MAX_LENGTH)
+    cursor: str | None = None
+    limit: int = Field(20, ge=1, le=100)
+
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
+
+    @field_validator("q")
+    @classmethod
+    def blank_to_none(cls, q):
+        return q or None
 
 
 class RecordItemOut(BaseModel):

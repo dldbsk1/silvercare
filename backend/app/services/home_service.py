@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.repositories import parent_repo, record_repo
 from app.services import dday, record_service
+from app.repositories.record_repo import RecordFilter
 from app.services.access import ParentAccess
 
 
@@ -16,7 +17,9 @@ RECENT_RECORDS = 3
 def get_home(db: Session, access: ParentAccess) -> dict:
     parent = parent_repo.get_for_user(db, access.parent_id, access.user_id)
     today = dday.today_kst()
-    records = record_repo.list_records(db, access.parent_id, "normal", RECENT_RECORDS)
+    records = record_repo.list_records(
+        db, access.parent_id, RecordFilter(status="normal"), RECENT_RECORDS
+    )
 
     return {
         "today": today,

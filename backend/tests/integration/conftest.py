@@ -28,6 +28,12 @@ def db():
     )
     yield session
     session.close()
+    # 커밋 없이 롤백 → 지연 검사(005 분류 상태 일치)가 안 돌므로 여기서 실행
+    if outer.is_active:
+        connection.execute(text(
+            "SET CONSTRAINTS records_classification_consistent, "
+            "record_items_classification_consistent IMMEDIATE"
+        ))
     outer.rollback()
     connection.close()
 

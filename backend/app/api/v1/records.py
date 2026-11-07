@@ -1,3 +1,4 @@
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Query, status
@@ -10,15 +11,15 @@ from app.api.deps import (
     ReadAccess,
     WriteAccess,
 )
-from app.schemas.common import DataResponse
+from app.schemas.common import DataResponse, ListResponse
 from app.schemas.records import (
     AudioPlaybackOut,
     AudioUploadUrlIn,
     AudioUploadUrlOut,
     RecordListItemOut,
+    RecordListQuery,
     RecordOut,
     RecordProcessingOut,
-    RecordStatus,
     RecordUpdateIn,
     RecordVersionsOut,
     TextRecordIn,
@@ -98,18 +99,17 @@ def create_text_record(
 
 @router.get(
     "/parents/{parent_id}/records",
-    response_model=DataResponse[list[RecordListItemOut]]
+    response_model=ListResponse[RecordListItemOut]
 )
 def list_records(
     parent_id: UUID,
     access: ReadAccess,
     db: DbSession,
-    record_status: RecordStatus | None = Query(None, alias="status"),
-    limit: int = Query(20, ge=1, le=100)
+    query: Annotated[RecordListQuery, Query()]
 ):
-    """최신순 목록. 홈 최근 기록: ?status=normal&limit=3"""
+    """기록함 (A-2). 최신순 커서, 조건 AND, 검색 current_text. 기본 status=normal (all: 전체)"""
     with db.begin():
-        return {"data": record_service.list_records(db, access, record_status, limit)}
+        return record_service.list_records(db, access, query)
 
 
 @router.get("/records/{record_id}", response_model=DataResponse[RecordOut])

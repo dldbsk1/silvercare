@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,10 +24,19 @@ class Settings(BaseSettings):
     # 허용 범위: app/ai/provider.py ALLOWED_MODES
     AI_PROVIDER: str | None = None
 
+    # 목록 커서 서명 키 (HMAC). 미설정 → local·test: 개발용 고정값, staging·production: 시작 중단
+    CURSOR_SECRET: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
         extra="ignore"
     )
+
+    @model_validator(mode="after")
+    def require_deploy_secrets(self):
+        if self.ENV in ("staging", "production") and not self.CURSOR_SECRET:
+            raise ValueError("CURSOR_SECRET 필요 (staging·production)")
+        return self
 
 
 settings = Settings()

@@ -6,7 +6,8 @@
 - 기록 없음 / 다른 가족 기록 → 404 (존재 여부 숨김)
 - 수정·재처리: 작성자 본인 + admin·writer
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -15,10 +16,12 @@ from app.core.config import settings
 from app.core.errors import AppError, service_unavailable
 from app.db import storage
 from app.repositories import record_repo, survey_repo, upload_repo
+from app.repositories.record_repo import RecordFilter
 from app.schemas.records import (
     IMMUTABLE_FIELDS,
     TEXT_MAX_LENGTH,
     VOICE_TEXT_MAX_LENGTH,
+    RecordListQuery,
     RecordUpdateIn,
     TextRecordIn,
     VoiceRecordIn,
@@ -26,9 +29,11 @@ from app.schemas.records import (
 from app.services import (
     audio_upload_service,
     classification_service,
+    pagination,
     transcription_service,
 )
 from app.services.access import ParentAccess, ensure_write, get_parent_access
+from app.services.dday import KST
 from app.services.patch_rules import check_patch
 
 
@@ -89,7 +94,7 @@ def to_list_item(record, user_id: str) -> dict:
         "classification_status": record["classification_status"],
         "current_text": record["current_text"],
         "transcript_empty": record["transcript_empty"],
-        "is_edited": record["text_version"] > 1,
+        "is_edited": record["is_edited"],
         "areas": list(record["areas"]),
         "recorded_at": record["recorded_at"],
         "occurred_at": record["occurred_at"],
@@ -172,16 +177,75 @@ def create_voice(db: Session, access: ParentAccess, body: VoiceRecordIn) -> dict
 
 # ── 조회 ──
 
-def list_records(
-    db: Session,
-    access: ParentAccess,
-    status: str | None,
-    limit: int
-) -> list[dict]:
-    return [
-        to_list_item(record, access.user_id)
-        for record in record_repo.list_records(db, access.parent_id, status, limit)
-    ]
+def to_filter(query: RecordListQuery) -> RecordFilter:
+    if query.date_from and query.date_to and query.date_from > query.date_to:
+        raise AppError(400, "INVALID_REQUEST", "시작 날짜가 끝 날짜보다 늦어요.")
+
+    return RecordFilter(
+        status=None if query.status == "all" else query.status,
+        area=query.area,
+        author_id=str(query.author_id) if query.author_id else None,
+        recorded_from=(
+            datetime.combine(query.date_from, time(), KST) if query.date_from else None
+        ),
+        recorded_before=(
+            datetime.combine(query.date_to + timedelta(days=1), time(), KST)
+            if query.date_to else None
+        ),
+        source=query.source,
+        input_type=query.input_type,
+        processing_status=query.processing_status,
+        classification_status=query.classification_status,
+        q=query.q,
+    )
+
+
+def read_cursor(cursor: str, scope: dict) -> tuple[datetime, str]:
+    position = pagination.decode_cursor(cursor, scope)
+    try:
+        recorded_at, record_id = position
+        return datetime.fromisoformat(recorded_at), str(UUID(record_id))
+    except ValueError:
+        raise pagination.invalid_cursor()
+
+
+def list_records(db: Session, access: ParentAccess, query: RecordListQuery) -> dict:
+    """기록함 (A-2). 최신순 keyset, limit + 1건 조회 → 다음 페이지 여부
+
+    커서 범위: 부모님 + 조건 (cursor·limit 제외) → 조건 변경 시 이전 커서 거부
+    total: 첫 페이지만
+    """
+    filters = to_filter(query)
+    scope = {
+        "parent_id": access.parent_id,
+        **query.model_dump(mode="json", exclude={"cursor", "limit"}),
+    }
+    after = read_cursor(query.cursor, scope) if query.cursor else None
+
+    rows = record_repo.list_records(
+        db, access.parent_id, filters, query.limit + 1, after=after
+    )
+    has_more = len(rows) > query.limit
+    rows = rows[:query.limit]
+
+    next_cursor = None
+    if has_more:
+        last = rows[-1]
+        next_cursor = pagination.encode_cursor(
+            [last["recorded_at"].isoformat(), str(last["id"])], scope
+        )
+
+    return {
+        "data": [to_list_item(record, access.user_id) for record in rows],
+        "meta": {
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+            "total": (
+                None if query.cursor
+                else record_repo.count_records(db, access.parent_id, filters)
+            ),
+        },
+    }
 
 
 def get_detail(db: Session, user_id: str, record_id: str) -> dict:
@@ -247,7 +311,9 @@ def reclassify(db: Session, user_id: str, record_id: str) -> dict:
             409, "USER_CLASSIFIED", "직접 고친 분류가 있어 다시 분류하지 않아요."
         )
 
-    record_repo.set_processing_status(db, record_id, "pending")
+    # 분석 중 → 이전 분류 표시 X (분류 상태 NULL + 항목 없음, DB 검사)
+    record_repo.replace_items(db, record_id, [], "ai")
+    record_repo.set_classification(db, record_id, None, None, "pending")
     classification_service.enqueue_classification(
         db, record_id, record["text_version"]
     )
@@ -303,6 +369,7 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
 
     old_codes = [i["item_code"] for i in record_repo.get_items(db, record_id)]
     new_codes = None
+    codes_changed = False
 
     if "item_codes" in sent:
         unknown = set(body.item_codes) - survey_repo.existing_codes(db, body.item_codes)
@@ -313,25 +380,31 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
             )
         if set(body.item_codes) != set(old_codes) or record["classified_by"] != "user":
             new_codes = body.item_codes
+        # AI 분류 그대로 확정 → 분류 주체만 user, 수정 이력 X (is_edited 유지)
+        codes_changed = (
+            set(body.item_codes) != set(old_codes)
+            or record["classification_status"] is None
+        )
 
     if not fields and new_codes is None:
         return to_detail(db, record, user_id)
 
     # 이력: 수정 전 상태 + 실제로 바뀐 칸 (기록 행 잠금 안에서 순번 결정)
     changed = [VERSION_FIELDS[f] for f in fields]
-    if new_codes is not None:
+    if codes_changed:
         changed.append("item_codes")
 
-    record_repo.insert_version(
-        db, record_id,
-        text_value=record["current_text"],
-        edited_by=user_id,
-        source=record["source"],
-        item_codes=old_codes,
-        occurred_at=record["occurred_at"],
-        classified_by=record["classified_by"],
-        changed_fields=changed
-    )
+    if changed:
+        record_repo.insert_version(
+            db, record_id,
+            text_value=record["current_text"],
+            edited_by=user_id,
+            source=record["source"],
+            item_codes=old_codes,
+            occurred_at=record["occurred_at"],
+            classified_by=record["classified_by"],
+            changed_fields=changed
+        )
 
     text_version = record["text_version"]
     if fields:

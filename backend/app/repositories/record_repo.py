@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from datetime import datetime
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -13,7 +16,9 @@ RECORD_COLUMNS = """
     r.text_version, r.original_text, r.current_text,
     r.audio_path, r.audio_duration_seconds,
     r.recorded_at, r.occurred_at, r.created_at, r.updated_at,
-    (SELECT u.display_name FROM users u WHERE u.id = r.author_id) AS author_name
+    (SELECT u.display_name FROM users u WHERE u.id = r.author_id) AS author_name,
+    -- 사용자 수정 이력 있음 (record_versions: PATCH로 실제 바뀐 칸만 저장)
+    EXISTS (SELECT 1 FROM record_versions rv WHERE rv.record_id = r.id) AS is_edited
 """
 
 # 영역 태그: 조사표 영역 순서 (신체 → 인지 → 행동변화 → 간호처치 → 재활)
@@ -104,20 +109,107 @@ def get_items(db: Session, record_id: str):
     ).mappings().all()
 
 
-def list_records(db: Session, parent_id: str, status: str | None, limit: int):
-    """최신순 (recorded_at, id). 인덱스 (parent_id, recorded_at DESC, id DESC)"""
+@dataclass(frozen=True)
+class RecordFilter:
+    """목록 조건 (모두 AND). None → 조건 없음"""
+
+    status: str | None = None
+    area: str | None = None
+    author_id: str | None = None
+    # recorded_at 범위: from 포함, before 미포함
+    recorded_from: datetime | None = None
+    recorded_before: datetime | None = None
+    source: str | None = None
+    input_type: str | None = None
+    processing_status: str | None = None
+    classification_status: str | None = None
+    # current_text 부분 일치 (원문 X)
+    q: str | None = None
+
+
+def escape_like(value: str) -> str:
+    """LIKE 패턴 문자 그대로 검색 (역슬래시 → % → _ 순서)"""
+    return value.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+
+
+def filter_conditions(parent_id: str, f: RecordFilter) -> tuple[list[str], dict]:
+    conditions = ["r.parent_id = :parent_id"]
+    params = {"parent_id": parent_id}
+
+    simple = [
+        ("status", "r.status = CAST(:status AS record_status_enum)"),
+        ("author_id", "r.author_id = CAST(:author_id AS uuid)"),
+        ("recorded_from", "r.recorded_at >= :recorded_from"),
+        ("recorded_before", "r.recorded_at < :recorded_before"),
+        ("source", "r.source = CAST(:source AS record_source_enum)"),
+        ("input_type", "r.input_type = CAST(:input_type AS input_type_enum)"),
+        ("processing_status",
+         "r.processing_status = CAST(:processing_status AS processing_status_enum)"),
+        ("classification_status",
+         "r.classification_status = "
+         "CAST(:classification_status AS classification_status_enum)"),
+    ]
+    for name, condition in simple:
+        value = getattr(f, name)
+        if value is not None:
+            conditions.append(condition)
+            params[name] = value
+
+    # 영역: 여러 항목에 걸려도 기록 1건 (EXISTS)
+    if f.area is not None:
+        conditions.append("""
+            EXISTS (
+                SELECT 1
+                FROM record_items ri
+                JOIN survey_items si ON si.code = ri.item_code
+                WHERE ri.record_id = r.id AND si.area = CAST(:area AS area_enum)
+            )
+        """)
+        params["area"] = f.area
+
+    if f.q is not None:
+        conditions.append(r"r.current_text ILIKE :q ESCAPE '\'")
+        params["q"] = f"%{escape_like(f.q)}%"
+
+    return conditions, params
+
+
+def list_records(
+    db: Session,
+    parent_id: str,
+    filters: RecordFilter,
+    limit: int,
+    after: tuple[datetime, str] | None = None
+):
+    """최신순 (recorded_at, id). 인덱스 (parent_id, recorded_at DESC, id DESC)
+
+    after: 이전 페이지 마지막 항목 (recorded_at, id) → 그 다음부터 (keyset)
+    """
+    conditions, params = filter_conditions(parent_id, filters)
+    if after is not None:
+        conditions.append(
+            "(r.recorded_at, r.id) < (CAST(:after_at AS timestamptz), CAST(:after_id AS uuid))"
+        )
+        params["after_at"], params["after_id"] = after
+
     return db.execute(
         text(f"""
             SELECT {RECORD_COLUMNS}, {AREAS_SUBQUERY}
             FROM records r
-            WHERE r.parent_id = :parent_id
-              AND (CAST(:status AS record_status_enum) IS NULL
-                   OR r.status = CAST(:status AS record_status_enum))
+            WHERE {" AND ".join(conditions)}
             ORDER BY r.recorded_at DESC, r.id DESC
             LIMIT :limit
         """),
-        {"parent_id": parent_id, "status": status, "limit": limit}
+        {**params, "limit": limit}
     ).mappings().all()
+
+
+def count_records(db: Session, parent_id: str, filters: RecordFilter) -> int:
+    conditions, params = filter_conditions(parent_id, filters)
+    return db.execute(
+        text(f"SELECT count(*) FROM records r WHERE {' AND '.join(conditions)}"),
+        params
+    ).scalar_one()
 
 
 def set_processing_status(

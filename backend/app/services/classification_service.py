@@ -4,6 +4,8 @@
 - classified_by = user → StaleClassification (사용자 분류 우선, AI 손대지 않음)
 - 저장 전 걸러내기: 52항목 코드만, confidence 0~1, MIN_CONFIDENCE 이상, 중복 제거
 - 결과 0건 → unclassified (미분류)
+- 이미 completed → StaleClassification (중복 실행: 완료된 분류 유지, failed로 덮어쓰기 X)
+- 분류 상태 ↔ 항목 일치: 항목 교체 + 상태 변경 같은 트랜잭션 (DB 검사, 005)
 - 트랜잭션: 호출하는 쪽(작업 함수)에서 시작
 """
 from sqlalchemy.orm import Session
@@ -48,6 +50,8 @@ def start(db: Session, record_id: str, text_version: int) -> str | None:
         return None
 
     ensure_current(record, text_version)
+    if record["processing_status"] == "completed":
+        raise StaleClassification("이미 분류 완료")
     record_repo.set_processing_status(db, record_id, "processing")
     return record["current_text"] or ""
 
@@ -104,6 +108,8 @@ def mark_failed(db: Session, record_id: str, text_version: int, code: str):
     try:
         ensure_current(record, text_version)
     except StaleClassification:
+        return
+    if record["processing_status"] == "completed":
         return
 
     record_repo.set_processing_status(db, record_id, "failed", code)

@@ -16,6 +16,8 @@ class DataResponse(BaseModel, Generic[T]):
 class ListMeta(BaseModel):
     next_cursor: str | None = None
     has_more: bool = False
+    # 조건에 맞는 전체 건수. 첫 페이지(커서 없음)에서만, 이후 null
+    total: int | None = None
 
 
 class ListResponse(BaseModel, Generic[T]):

@@ -68,6 +68,12 @@ def list_for_user(db: Session, user_id: str):
 
 
 
+def get_nickname(db: Session, parent_id: str) -> str | None:
+    return db.execute(
+        text("SELECT nickname FROM parents WHERE id = :id"), {"id": parent_id}
+    ).scalar_one_or_none()
+
+
 def get_for_update(db: Session, parent_id: str):
     return db.execute(
         text(f"SELECT {PARENT_COLUMNS} FROM parents p WHERE p.id = :id FOR UPDATE"),

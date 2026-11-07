@@ -22,6 +22,7 @@ def get_me(db: Session, user_id: str) -> dict:
             "consents_completed": consent_status["completed"],
             "missing_consents": consent_status["missing_required"],
             "name_set": user["display_name"] is not None,
+            # 접근 가능한 부모님 공간 1개 이상 (직접 등록 또는 초대 수락)
             "parent_registered": bool(parents),
         },
         "parent_ids": [str(parent["id"]) for parent in parents],

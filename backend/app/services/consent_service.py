@@ -5,6 +5,7 @@
 - 동의 문구가 새 버전으로 바뀌면 이전 버전 동의는 "완료"로 보지 않는다 (다시 동의)
 - 운영(ENV != local)에서는 개발용(dev-) 문구를 유효한 문구로 보지 않는다
 - 필수 문구가 하나라도 발행되지 않았으면 누구도 동의 완료가 아니다
+- family_share: 가입 동의 X. 초대 수락 때 부모님별 동의 (family_members에 기록)
 
 트랜잭션은 라우터가 연다.
 """
@@ -16,14 +17,27 @@ from app.repositories import consent_repo
 
 
 REQUIRED_TYPES = ("service", "privacy", "health")
+SHARE_TYPE = "family_share"
 
 
-def active_documents(db: Session) -> dict[str, dict]:
+def published_documents(db: Session) -> dict[str, dict]:
     if settings.ENV == "local":
         rows = consent_repo.list_active_documents(db)
     else:
         rows = consent_repo.list_active_documents_excluding_dev(db)
     return {row["type"]: dict(row) for row in rows}
+
+
+def active_documents(db: Session) -> dict[str, dict]:
+    """가입 동의 문서 (가족 공유 동의 제외)"""
+    return {
+        t: doc for t, doc in published_documents(db).items() if t != SHARE_TYPE
+    }
+
+
+def share_document(db: Session) -> dict | None:
+    """가족 공유 동의 문서 (초대 미리보기·수락). 미발행 → None"""
+    return published_documents(db).get(SHARE_TYPE)
 
 
 def required_types(documents: dict[str, dict]) -> list[str]:

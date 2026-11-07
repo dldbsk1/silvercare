@@ -17,7 +17,7 @@ from sqlalchemy import text
 
 from app.ai.provider import check_ai_config
 from app.db.session import new_session
-from app.services import upload_cleanup_service
+from app.services import rate_limit, upload_cleanup_service
 from app.workers.tasks import (
     TASKS,
     Job,
@@ -214,6 +214,13 @@ def run_cleanup():
             upload_cleanup_service.run(db)
     except Exception:
         logger.exception("업로드 정리 실패")
+
+    try:
+        with new_session() as db:
+            with db.begin():
+                rate_limit.cleanup(db)
+    except Exception:
+        logger.exception("요청 제한 기록 정리 실패")
 
 
 def main():

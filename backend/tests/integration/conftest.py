@@ -16,6 +16,14 @@ from app.db.session import engine, get_db
 from app.main import app
 
 
+DEFERRED_CHECKS = (
+    "records_classification_consistent",
+    "record_items_classification_consistent",
+    "parents_has_admin",
+    "family_members_last_admin",
+)
+
+
 @pytest.fixture
 def db():
     connection = engine.connect()
@@ -28,12 +36,9 @@ def db():
     )
     yield session
     session.close()
-    # 커밋 없이 롤백 → 지연 검사(005 분류 상태 일치)가 안 돌므로 여기서 실행
+    # 커밋 없이 롤백 → 지연 검사(005 분류 상태, 006 마지막 관리자)가 안 돌므로 여기서 실행
     if outer.is_active:
-        connection.execute(text(
-            "SET CONSTRAINTS records_classification_consistent, "
-            "record_items_classification_consistent IMMEDIATE"
-        ))
+        connection.execute(text(f"SET CONSTRAINTS {', '.join(DEFERRED_CHECKS)} IMMEDIATE"))
     outer.rollback()
     connection.close()
 

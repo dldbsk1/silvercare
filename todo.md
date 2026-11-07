@@ -15,6 +15,11 @@
 - [ ] 앱 팀에 공유 (A-1): 가입 흐름 동의 → 이름 입력(`name_set`) → 부모님 등록, 화면 이름은 `author_name`(null → "가족"), 홈 처리 상태별 표시 기준, PATCH 오류 규칙
 - [ ] 앱 팀에 공유 (음성 저장 시점): 녹음·들어보기·다시 녹음·취소는 휴대폰 안에서만 (서버 호출 X). **분류 시작** 버튼에서만 업로드 URL → 파일 업로드 → 기록 생성 순서로 호출. 미리 업로드 금지. 중간 실패 시 같은 `Idempotency-Key`로 재시도. 기록 생성 뒤에는 삭제 X, "기록지에서 제외"만 가능하다고 안내
 - [ ] 앱 팀에 공유 (A-2): 목록 응답 `meta {next_cursor, has_more, total}`, 기본 `status=normal`(전체는 `all`), 조건 바뀌면 커서 버리고 첫 페이지부터, `INVALID_CURSOR` → 첫 페이지 다시, 재분류 중에는 이전 분류 안 보임
+- [ ] 앱 팀에 공유 (A-3 초대): 링크 `{INVITE_BASE_URL}#t={token}` → 앱에서 `#t=` 읽고 즉시 주소·이동 기록에서 제거, **flutter_secure_storage**에만 보관 (일반 저장소·분석·오류 리포트 X), 로그인·가입·동의·이름 입력 뒤 수락 화면으로 복귀, 수락 성공·종료 오류(만료·취소·사용됨)·7일 경과 시 삭제. 토큰은 `POST /v1/invites/preview`·`/accept` 본문으로만. 미설치 안내 웹페이지에 분석 스크립트 금지
+- [ ] 앱 팀에 공유 (A-3 오류·응답): `INVITE_NOT_FOUND`(404) `INVITE_REVOKED`/`INVITE_EXPIRED`(410) `INVITE_USED`/`ALREADY_MEMBER`/`INVITE_LIMIT`/`LAST_ADMIN`(409) `CONSENT_REQUIRED`(400, 공유 동의 버전) `RATE_LIMITED`(429, `Retry-After`). 수락 재요청(지금도 가족) → 같은 응답. 내보내기·나가기 = `DELETE /v1/family/{member_id}` (204). `parent_registered` = 접근 가능한 부모님 공간 1개 이상
+- [ ] 👤 초대 링크 실제 환경 확인 (앱 링크 도메인 정한 뒤): 카카오톡 내부 브라우저 / iOS Safari / Android Chrome × 앱 설치·미설치 × 로그인 화면 거친 뒤 초대 화면 복귀 — `#t=`가 앱까지 전달되는지 (카카오톡 인앱 브라우저는 앱 링크를 바로 안 열 수 있음 → 미설치 안내 페이지에 "앱에서 열기" 버튼)
+- [ ] 👤 앱 테스트: 로그인 전 링크 클릭 → 가입 → 수락 (토큰 유지), 가입 중단 후 다시 실행, 가입 도중 만료
+- [ ] API 명세서 3장 수정: 초대 토큰은 본문 (`/invites/{token}/accept` → `/invites/accept`), 미리보기·초대 목록·취소·구성원 목록·내보내기 API 추가, 가족 최근 30일 기록 수는 P2로
 - [ ] 앱 팀에 공유 (오류 코드): `AUDIO_ALREADY_USED`(409, `record_id`), `UPLOAD_EXPIRED`(410), `AUDIO_INVALID`(409, 새 녹음 안내), `TRANSCRIPTION_FAILED`(409), 음성 글 수정 2000자
 - [ ] AI 팀원에게 공유: STT는 `Transcript` 반환, 무음 = `""`, 오류는 예외(빈 글 금지), 미설정 = `SpeechToTextNotConfigured`, 5분 안에 끝나거나 타임아웃
 - [ ] AI 팀원에게 `backend/app/ai/interfaces.py` 공유하고 함수 모양 합의
@@ -24,6 +29,8 @@
 - [ ] ⚖️ 필수 동의 철회 시 데이터 삭제 시점·범위 (A-SET-001 "예: 7일 뒤") — API 명세서 14.3: 개발자 임의 결정 금지
 - [ ] ⚖️ 실제 동의 문구 4종 (서비스·개인정보·건강정보·알림) 확정
 - [ ] ⚖️ 부모님 본인 동의·대리 동의 방식 (POL-05, `care_subject_authorizations`)
+- [ ] ⚖️ 가족 공유 근거: 초대 시 관리자 확인 문구(`share_confirmed`) + 수락 시 `family_share` 동의 문구 확정. 부모님 처음 등록하는 관리자도 확인 받을지
+- [ ] ⚖️ 내보낸 가족이 쓴 기록의 보관 기간·삭제 요청 처리 (지금은 기록 유지, 가족 관계만 삭제)
 - [ ] P0에서 부모님 1명만 등록하도록 서버에서 막을지 (현재는 여러 명 허용, P2 기능)
 - [ ] STT·LLM 제공업체 선택 (Whisper / Clova / Google) — AI 팀원과
 - [ ] 백엔드 배포처 (Railway / Render / Fly.io)
@@ -274,10 +281,18 @@
 - [ ] 홈에 받은 체크리스트·컨디션 칸 추가 (B단계)
 - [x] D-day: 한국 시간 기준 계산, 연기 = 날짜 변경, 취소 = null (A-1)
 
-### 가족 — A-FAM
-- [ ] `POST /v1/parents/{id}/invites` — admin, 7일 유효 링크 (DB에는 해시만)
-- [ ] `POST /v1/invites/{token}/accept` — 초대받은 사람도 동의 필수, 만료 링크 안내
-- [ ] `PATCH /v1/family/{member_id}/role` — admin만, 마지막 관리자 보호 (409 `LAST_ADMIN`)
+### 가족 — A-FAM (A-3, `migrations/006`)
+- [x] `POST /v1/parents/{id}/invites` — admin, 7일·1회·활성 10개 (부모님 잠금 후 셈), writer/viewer만, `share_confirmed` 필수, DB에는 해시만, 링크 `#t=`
+- [x] `GET /v1/parents/{id}/invites`, `DELETE /v1/invites/{invite_id}` — 쓸 수 있는 초대 목록·취소
+- [x] `POST /v1/invites/preview` — 로그인만, 초대한 사람 이름·호칭·역할·만료·공유 동의 문서만
+- [x] `POST /v1/invites/accept` — 필수 동의 + `family_share` 동의 (부모님별, `family_members`에 기록), 재요청 같은 응답, 내보내진 뒤 예전 링크 409
+- [x] 미리보기·수락 요청 제한 (사용자 10분 20회, IP 10분 60회, DB 카운터)
+- [x] `GET /v1/parents/{id}/family` — 구성원 목록
+- [x] `PATCH /v1/family/{member_id}/role` — admin만 (관리자끼리 동등), 마지막 관리자 409 `LAST_ADMIN`, 강등 시 그 사람 초대 취소
+- [x] `DELETE /v1/family/{member_id}` — 내보내기(admin)·나가기(본인), 기록 유지, 그 사람 초대 취소
+- [x] 마지막 관리자 DB 검사 (역할 변경·삭제·부모님 생성, 공간 삭제는 통과)
+- [ ] A-5 탈퇴: 같은 보호 규칙 (`family_service` 잠금 순서) 사용
+- [ ] 배포 설정: `INVITE_BASE_URL`(앱 링크 도메인), `TRUSTED_PROXY_HOPS`(프록시 수)
 - [ ] 👤 Flutter: 초대 링크로 가입 시 부모님 등록 단계 건너뛰기
 
 ### 관찰 체크리스트 — A-TASK

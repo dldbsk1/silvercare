@@ -18,12 +18,14 @@ class AppError(Exception):
         status_code: int,
         code: str,
         message: str,
-        details=None
+        details=None,
+        headers: dict[str, str] | None = None
     ):
         self.status_code = status_code
         self.code = code
         self.message = message
         self.details = details
+        self.headers = headers
 
 
 def service_unavailable(service: str) -> AppError:
@@ -73,7 +75,7 @@ def register_exception_handlers(app: FastAPI):
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError):
         return error_response(
-            exc.status_code, exc.code, exc.message, exc.details
+            exc.status_code, exc.code, exc.message, exc.details, exc.headers
         )
 
     @app.exception_handler(StarletteHTTPException)

@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     # 목록 커서 서명 키 (HMAC). 미설정 → local·test: 개발용 고정값, staging·production: 시작 중단
     CURSOR_SECRET: str | None = None
 
+    # 초대 링크 앞부분 (앱 링크 도메인 미정). 토큰은 #t= 뒤 (서버·미리보기 봇에 전송 X)
+    INVITE_BASE_URL: str = "https://example.invalid/invite"
+
+    # 앞단 프록시 수. 0 → X-Forwarded-For 무시 (위조 방지), 배포처 정해지면 설정
+    TRUSTED_PROXY_HOPS: int = 0
+
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
         extra="ignore"

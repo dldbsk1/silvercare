@@ -7,6 +7,7 @@
     python -m scripts.smoke_test
 """
 import getpass
+import uuid
 
 import httpx
 from sqlalchemy import text
@@ -89,6 +90,7 @@ def main():
           and me["onboarding"]["parent_registered"])
 
     uploaded_path = None
+    temp_admin = None
 
     try:
         # 3. 음성 업로드 URL → Storage 직접 업로드
@@ -113,11 +115,37 @@ def main():
         )
         check("다른 부모님은 404", response.status_code == 404)
 
-        # 역할 변경 API(A-FAM-002, P1)가 아직 없어서 DB에서 직접 바꾼다
+        # 두 번째 로그인 없이 viewer 확인: 임시 관리자 추가 후 DB에서 강등
+        # (관리자 0명 → DB 검사 거부, migrations/006)
+        temp_admin = str(uuid.uuid4())
         with db.begin():
             db.execute(
-                text("UPDATE family_members SET role = 'viewer' WHERE parent_id = :p"),
-                {"p": parent_id}
+                text("""
+                    INSERT INTO auth.users (id, aud, role, email)
+                    VALUES (:id, 'authenticated', 'authenticated', :email)
+                """),
+                {"id": temp_admin, "email": f"{temp_admin}@smoke.invalid"}
+            )
+            db.execute(
+                text("""
+                    INSERT INTO users (id, login_type) VALUES (:id, 'email')
+                    ON CONFLICT (id) DO NOTHING
+                """),
+                {"id": temp_admin}
+            )
+            db.execute(
+                text("""
+                    INSERT INTO family_members (parent_id, user_id, role)
+                    VALUES (:p, :u, 'admin')
+                """),
+                {"p": parent_id, "u": temp_admin}
+            )
+            db.execute(
+                text("""
+                    UPDATE family_members SET role = 'viewer'
+                    WHERE parent_id = :p AND user_id <> :u
+                """),
+                {"p": parent_id, "u": temp_admin}
             )
         response = http.post(url, headers=headers, json={})
         check("viewer는 업로드 불가 403", response.status_code == 403)
@@ -128,6 +156,8 @@ def main():
             storage.remove_objects(settings.STORAGE_AUDIO_BUCKET, [uploaded_path])
         with db.begin():
             db.execute(text("DELETE FROM parents WHERE id = :p"), {"p": parent_id})
+            if temp_admin:
+                db.execute(text("DELETE FROM auth.users WHERE id = :id"), {"id": temp_admin})
         db.close()
         print("테스트 데이터 정리 완료")
 

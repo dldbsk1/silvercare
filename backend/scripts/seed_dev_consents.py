@@ -1,4 +1,4 @@
-"""개발용 동의 문구 4종을 consent_documents에 넣는다.
+"""개발용 동의 문구 5종을 consent_documents에 넣는다.
 
 - ENV=local일 때만 실행된다 (운영 DB에 가짜 법률 문구가 들어가지 않도록)
 - 버전은 'dev-'로 시작한다. 운영(ENV != local)에서는 동의 API가 dev- 문구를 쓰지 않는다
@@ -21,6 +21,8 @@ DOCUMENTS = [
     ("privacy", "개인정보 수집·이용 동의", True),
     ("health", "건강정보(민감정보) 처리 동의", True),
     ("noti", "알림 수신 동의", False),
+    # 가입 동의 목록 X, 초대 수락 때만 (migrations/006 이후)
+    ("family_share", "가족 기록 공유 동의", False),
 ]
 
 

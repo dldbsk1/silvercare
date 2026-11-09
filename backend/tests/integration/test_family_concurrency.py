@@ -14,8 +14,9 @@ from sqlalchemy import text
 
 from app.core.errors import AppError
 from app.db.session import engine, new_session
+from app.schemas.account import WithdrawalIn
 from app.schemas.family import InviteCreateIn, RoleUpdateIn
-from app.services import family_service
+from app.services import account_service, family_service
 from app.services.access import ParentAccess
 
 
@@ -60,6 +61,7 @@ def family():
     yield {"parent_id": parent_id, "x": users[0], "y": users[1], "members": members}
 
     with engine.begin() as conn:
+        conn.execute(text("DELETE FROM deletion_requests WHERE requester_id = ANY(:ids)"), {"ids": users})
         conn.execute(text("DELETE FROM parents WHERE id = :p"), {"p": parent_id})
         conn.execute(text("DELETE FROM auth.users WHERE id = ANY(:ids)"), {"ids": users})
 
@@ -156,6 +158,34 @@ def test_both_admins_leave_at_once(family):
     result = race(
         lambda db: family_service.remove_member(db, x, members[x]),
         lambda db: family_service.remove_member(db, y, members[y]),
+    )
+
+    assert result["error"].code == "LAST_ADMIN"
+    assert admin_count(family["parent_id"]) == 1
+
+
+WITHDRAW = WithdrawalIn(confirm=True)
+
+
+def test_both_admins_withdraw_at_once(family):
+    x, y = family["x"], family["y"]
+
+    result = race(
+        lambda db: account_service.withdraw(db, x, WITHDRAW),
+        lambda db: account_service.withdraw(db, y, WITHDRAW),
+    )
+
+    # Y는 잠금 뒤 다시 확인 → 혼자 남음 → 공간 삭제 확인 필요
+    assert result["error"].code == "SOLE_MEMBER_CONFIRM_REQUIRED"
+    assert admin_count(family["parent_id"]) == 1
+
+
+def test_withdraw_and_self_demote(family):
+    x, y, members = family["x"], family["y"], family["members"]
+
+    result = race(
+        lambda db: account_service.withdraw(db, x, WITHDRAW),
+        lambda db: family_service.change_role(db, y, members[y], RoleUpdateIn(role="writer")),
     )
 
     assert result["error"].code == "LAST_ADMIN"

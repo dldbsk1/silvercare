@@ -5,7 +5,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
-RECORD_COLUMNS = """
+# 표시 이름. 탈퇴 계정 → 고정 문구 (삭제 실행 전 남은 기록·다른 가족 기록의 수정 이력)
+USER_NAME = "CASE WHEN u.withdrawn_at IS NOT NULL THEN '탈퇴한 가족' ELSE u.display_name END"
+
+RECORD_COLUMNS = f"""
     r.id, r.parent_id, r.author_id,
     r.input_type::text AS input_type, r.source::text AS source,
     r.status::text AS status,
@@ -16,7 +19,7 @@ RECORD_COLUMNS = """
     r.text_version, r.original_text, r.current_text,
     r.audio_path, r.audio_duration_seconds,
     r.recorded_at, r.occurred_at, r.created_at, r.updated_at,
-    (SELECT u.display_name FROM users u WHERE u.id = r.author_id) AS author_name,
+    (SELECT {USER_NAME} FROM users u WHERE u.id = r.author_id) AS author_name,
     -- 사용자 수정 이력 있음 (record_versions: PATCH로 실제 바뀐 칸만 저장)
     EXISTS (SELECT 1 FROM record_versions rv WHERE rv.record_id = r.id) AS is_edited
 """
@@ -351,12 +354,12 @@ def insert_version(
 
 def list_versions(db: Session, record_id: str):
     return db.execute(
-        text("""
+        text(f"""
             SELECT rv.version, rv.changed_fields, rv.text, rv.edited_by, rv.edited_at,
                    rv.source_snapshot::text AS source_snapshot,
                    rv.item_codes_snapshot, rv.occurred_at_snapshot,
                    rv.classified_by_snapshot::text AS classified_by_snapshot,
-                   u.display_name AS edited_by_name
+                   {USER_NAME} AS edited_by_name
             FROM record_versions rv
             LEFT JOIN users u ON u.id = rv.edited_by
             WHERE rv.record_id = :id

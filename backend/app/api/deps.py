@@ -4,7 +4,8 @@
     def create_text_record(parent_id: UUID, access: WriteAccess, db: DbSession): ...
 
 확인 순서 (API 명세서 0.5·14.1): 토큰 → 프로필 → 필수 동의 → 부모님 가족 여부·역할
-- CurrentUser: 로그인만 확인 (/auth/me, 동의 API)
+- ProfileUser: 로그인만 (탈퇴 계정 포함, GET /auth/me 전용)
+- CurrentUser: 로그인 + 탈퇴 안 함 (동의 API 등). 탈퇴 → 403 ACCOUNT_WITHDRAWN
 - ConsentedUser: 필수 동의까지 확인 (부모님 등록 등)
 - ReadAccess/WriteAccess/AdminAccess: 동의 + 해당 부모님 가족·역할 확인
 
@@ -16,6 +17,7 @@ from uuid import UUID
 from fastapi import Depends, Header
 from sqlalchemy.orm import Session
 
+from app.core.errors import AppError
 from app.core.security import AuthUser, get_auth_user
 from app.db.session import get_db
 from app.repositories import user_repo
@@ -31,15 +33,32 @@ from app.services.access import (
 DbSession = Annotated[Session, Depends(get_db)]
 
 
+def ensure_profile(db: Session, auth_user: AuthUser):
+    """public.users 프로필이 없으면 생성 (첫 요청 때 한 번). 반환: 탈퇴 시각"""
+    with db.begin():
+        return user_repo.ensure_user(
+            db, auth_user.id, auth_user.provider, auth_user.phone
+        )
+
+
+def get_profile_user(
+    db: DbSession,
+    auth_user: AuthUser = Depends(get_auth_user)
+) -> AuthUser:
+    ensure_profile(db, auth_user)
+    return auth_user
+
+
+ProfileUser = Annotated[AuthUser, Depends(get_profile_user)]
+
+
 def get_current_user(
     db: DbSession,
     auth_user: AuthUser = Depends(get_auth_user)
 ) -> AuthUser:
-    """토큰 확인 + public.users 프로필이 없으면 생성 (첫 요청 때 한 번)"""
-    with db.begin():
-        user_repo.ensure_user(
-            db, auth_user.id, auth_user.provider, auth_user.phone
-        )
+    """탈퇴 접수 뒤 (삭제 예정일 전) 다시 로그인 → 403. 앱은 /auth/me로 상태 확인"""
+    if ensure_profile(db, auth_user) is not None:
+        raise AppError(403, "ACCOUNT_WITHDRAWN", "탈퇴 처리 중인 계정이에요.")
     return auth_user
 
 

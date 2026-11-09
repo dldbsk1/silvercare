@@ -6,6 +6,7 @@
 - 운영(ENV != local)에서는 개발용(dev-) 문구를 유효한 문구로 보지 않는다
 - 필수 문구가 하나라도 발행되지 않았으면 누구도 동의 완료가 아니다
 - family_share: 가입 동의 X. 초대 수락 때 부모님별 동의 (family_members에 기록)
+- 필수 동의 철회 → 삭제 예약 (내가 쓴 기록, deletion_service). 예정일 전 다시 동의 → 예약 취소
 
 트랜잭션은 라우터가 연다.
 """
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.errors import AppError
 from app.repositories import consent_repo
+from app.services import deletion_service
 
 
 REQUIRED_TYPES = ("service", "privacy", "health")
@@ -83,6 +85,7 @@ def get_status(db: Session, user_id: str) -> dict:
         "completed": not missing,
         "missing_required": missing,
         "current": current,
+        "deletion_scheduled_for": deletion_service.consent_withdrawal_scheduled_for(db, user_id),
     }
 
 
@@ -131,18 +134,22 @@ def save_consents(db: Session, user_id: str, items: list) -> dict:
         consent_repo.revoke_consents(db, user_id, item.type)
         consent_repo.insert_consent(db, user_id, item.type, item.doc_version)
 
-    return get_status(db, user_id)
+    status = get_status(db, user_id)
+    if status["completed"] and status["deletion_scheduled_for"] is not None:
+        deletion_service.cancel_consent_withdrawal(db, user_id)
+        status = get_status(db, user_id)
+    return status
 
 
 def revoke(db: Session, user_id: str, consent_type: str) -> dict:
-    """철회. 필수 동의를 철회하면 이후 기록 기능이 막힌다 (ConsentedUser 의존성)
-
-    TODO(A-SET-001): 철회 시 데이터 삭제 예약(deletion_requests). 법률 검토 후 정책 확정
-    """
+    """철회. 필수 동의 → 기록 기능 중지 (ConsentedUser 의존성) + 삭제 예약 (예정일 응답)"""
     consent_repo.lock_user(db, user_id)
 
     if consent_repo.revoke_consents(db, user_id, consent_type) == 0:
         raise AppError(404, "NOT_FOUND", "철회할 동의가 없어요.")
+
+    if consent_type in required_types(active_documents(db)):
+        deletion_service.schedule_consent_withdrawal(db, user_id)
 
     return get_status(db, user_id)
 

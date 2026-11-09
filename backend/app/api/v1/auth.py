@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.deps import ConsentedUser, CurrentUser, DbSession
+from app.api.deps import ConsentedUser, DbSession, ProfileUser
 from app.schemas.auth import MeOut, MeUpdateIn
 from app.schemas.common import DataResponse
 from app.services import user_service
@@ -10,8 +10,11 @@ router = APIRouter()
 
 
 @router.get("/me", response_model=DataResponse[MeOut])
-def get_my_info(user: CurrentUser, db: DbSession):
-    """온보딩 상태. 앱은 이 값으로 동의 화면 / 부모님 등록 / 홈 중 어디로 갈지 정한다"""
+def get_my_info(user: ProfileUser, db: DbSession):
+    """온보딩 상태. 앱은 이 값으로 동의 화면 / 부모님 등록 / 홈 중 어디로 갈지 정한다
+
+    탈퇴 계정도 응답 (account_status=withdrawn → "탈퇴 처리 중" 화면)
+    """
     with db.begin():
         return {"data": user_service.get_me(db, user.id)}
 

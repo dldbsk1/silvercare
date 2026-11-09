@@ -18,7 +18,7 @@ from app.schemas.parents import (
     ParentCreateIn,
     ParentUpdateIn,
 )
-from app.services import dday
+from app.services import account_service, dday
 from app.services.access import ParentAccess
 from app.services.patch_rules import check_patch
 
@@ -36,6 +36,7 @@ def to_out(row, today: date | None = None) -> dict:
 
 def create_parent(db: Session, user_id: str, body: ParentCreateIn) -> dict:
     """부모님 프로필 생성 + 만든 사람 = 관리자. 같은 트랜잭션 안에서 실행돼야 한다"""
+    account_service.lock_active_user(db, user_id)
     parent_id = parent_repo.create_parent(
         db, body.nickname, body.age_band, body.apply_stage, body.cohabiting
     )

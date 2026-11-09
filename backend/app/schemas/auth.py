@@ -1,3 +1,6 @@
+from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from app.schemas.consents import ConsentType
@@ -18,8 +21,16 @@ class OnboardingOut(BaseModel):
     parent_registered: bool
 
 
+class AccountOut(BaseModel):
+    # withdrawn: 탈퇴 접수됨 → 다른 API 403 ACCOUNT_WITHDRAWN
+    status: Literal["active", "withdrawn"]
+    # 탈퇴 삭제 예정 시각 (active → null)
+    deletion_scheduled_for: datetime | None
+
+
 class MeOut(BaseModel):
     user: MeUserOut
+    account: AccountOut
     onboarding: OnboardingOut
     parent_ids: list[str]
 

@@ -101,3 +101,29 @@ def set_role(db: Session, member_id: str, role: str):
 
 def delete_member(db: Session, member_id: str):
     db.execute(text("DELETE FROM family_members WHERE id = :id"), {"id": member_id})
+
+
+def list_parent_ids_for_user(db: Session, user_id: str) -> list[str]:
+    """id 순 (여러 부모님 잠글 때 순서 고정 → 교착 방지)"""
+    return [
+        str(parent_id) for parent_id in db.execute(
+            text("""
+                SELECT parent_id FROM family_members
+                WHERE user_id = :user_id
+                ORDER BY parent_id
+            """),
+            {"user_id": user_id}
+        ).scalars()
+    ]
+
+
+def get_membership(db: Session, parent_id: str, user_id: str):
+    return db.execute(
+        text(f"""
+            SELECT {MEMBER_COLUMNS}
+            FROM family_members fm
+            JOIN users u ON u.id = fm.user_id
+            WHERE fm.parent_id = :parent_id AND fm.user_id = :user_id
+        """),
+        {"parent_id": parent_id, "user_id": user_id}
+    ).mappings().first()

@@ -3,8 +3,18 @@ from sqlalchemy.orm import Session
 
 from app.repositories import parent_repo, user_repo
 from app.schemas.auth import ME_IMMUTABLE_FIELDS, MeUpdateIn
-from app.services import consent_service
+from app.services import consent_service, deletion_service
 from app.services.patch_rules import check_patch
+
+
+def account_out(db: Session, user) -> dict:
+    if user["withdrawn_at"] is None:
+        return {"status": "active", "deletion_scheduled_for": None}
+    request = deletion_service.account_request(db, str(user["id"]))
+    return {
+        "status": "withdrawn",
+        "deletion_scheduled_for": request["scheduled_for"] if request else None,
+    }
 
 
 def get_me(db: Session, user_id: str) -> dict:
@@ -18,6 +28,7 @@ def get_me(db: Session, user_id: str) -> dict:
             "login_type": user["login_type"],
             "display_name": user["display_name"],
         },
+        "account": account_out(db, user),
         "onboarding": {
             "consents_completed": consent_status["completed"],
             "missing_consents": consent_status["missing_required"],

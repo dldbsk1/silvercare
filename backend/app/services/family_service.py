@@ -2,6 +2,7 @@
 
 - 트랜잭션: 라우터에서 시작
 - 잠금 순서 (가족 구성 변경 전부): 부모님 행 → family_members / family_invites
+  가족 추가 (수락)·탈퇴: 사용자 행 먼저 → 부모님 행
   → 초대 생성·수락·역할 변경·내보내기·나가기 직렬화. 잠금 뒤 요청자 역할 다시 확인
 - 마지막 관리자: 409 LAST_ADMIN (서비스) + 트랜잭션 끝 검사 (DB, 006)
 - 관리자 권한 잃음 (강등·내보내기·나가기) → 그 사람이 만든 미사용 초대 취소
@@ -17,7 +18,7 @@ from app.core.config import settings
 from app.core.errors import AppError
 from app.repositories import family_repo, invite_repo, parent_repo
 from app.schemas.family import InviteAcceptIn, InviteCreateIn, RoleUpdateIn
-from app.services import consent_service
+from app.services import account_service, consent_service
 from app.services.access import ParentAccess, get_parent_access
 
 
@@ -176,7 +177,7 @@ def preview(db: Session, user_id: str, token: str) -> dict:
 
 
 def accept(db: Session, user_id: str, body: InviteAcceptIn) -> dict:
-    """한 트랜잭션: 부모님 잠금 → 초대 잠금 → 확인 → 가족 추가 + 수락 표시
+    """한 트랜잭션: 사용자 잠금 → 부모님 잠금 → 초대 잠금 → 확인 → 가족 추가 + 수락 표시
 
     응답 유실 후 같은 토큰 재요청 (지금도 가족) → 같은 결과
     다른 부모님 가족인 사용자 → 기존 관계 유지, 관계 추가
@@ -186,6 +187,7 @@ def accept(db: Session, user_id: str, body: InviteAcceptIn) -> dict:
     if invite is None:
         raise invite_not_found()
 
+    account_service.lock_active_user(db, user_id)
     parent_id = str(invite["parent_id"])
     if not family_repo.lock_parent(db, parent_id):
         raise invite_not_found()

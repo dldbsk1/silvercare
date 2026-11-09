@@ -53,6 +53,8 @@ class ConsentStatusOut(BaseModel):
     # 아직 동의하지 않았거나 문구가 바뀌어 다시 동의해야 하는 필수 항목
     missing_required: list[ConsentType]
     current: list[CurrentConsentOut]
+    # 필수 동의 철회 → 내가 쓴 기록 삭제 예정 시각. 다시 동의하면 null (예약 취소)
+    deletion_scheduled_for: datetime | None
 
 
 class MyConsentsOut(ConsentStatusOut):

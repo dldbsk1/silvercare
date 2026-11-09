@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # 앞단 프록시 수. 0 → X-Forwarded-For 무시 (위조 방지), 배포처 정해지면 설정
     TRUSTED_PROXY_HOPS: int = 0
 
+    # 탈퇴·동의 철회 삭제 실행 (워커). ⚖️ 법률 상담 전 운영 false, 개발 DB에서만 켜서 확인
+    DELETION_EXECUTE_ENABLED: bool = False
+
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
         extra="ignore"

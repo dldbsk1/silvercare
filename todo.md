@@ -17,6 +17,7 @@
 - [ ] 앱 팀에 공유 (A-2): 목록 응답 `meta {next_cursor, has_more, total}`, 기본 `status=normal`(전체는 `all`), 조건 바뀌면 커서 버리고 첫 페이지부터, `INVALID_CURSOR` → 첫 페이지 다시, 재분류 중에는 이전 분류 안 보임
 - [ ] 앱 팀에 공유 (A-3 초대): 링크 `{INVITE_BASE_URL}#t={token}` → 앱에서 `#t=` 읽고 즉시 주소·이동 기록에서 제거, **flutter_secure_storage**에만 보관 (일반 저장소·분석·오류 리포트 X), 로그인·가입·동의·이름 입력 뒤 수락 화면으로 복귀, 수락 성공·종료 오류(만료·취소·사용됨)·7일 경과 시 삭제. 토큰은 `POST /v1/invites/preview`·`/accept` 본문으로만. 미설치 안내 웹페이지에 분석 스크립트 금지
 - [ ] 앱 팀에 공유 (A-3 오류·응답): `INVITE_NOT_FOUND`(404) `INVITE_REVOKED`/`INVITE_EXPIRED`(410) `INVITE_USED`/`ALREADY_MEMBER`/`INVITE_LIMIT`/`LAST_ADMIN`(409) `CONSENT_REQUIRED`(400, 공유 동의 버전) `RATE_LIMITED`(429, `Retry-After`). 수락 재요청(지금도 가족) → 같은 응답. 내보내기·나가기 = `DELETE /v1/family/{member_id}` (204). `parent_registered` = 접근 가능한 부모님 공간 1개 이상
+- [ ] 앱 팀에 공유 (A-5): `/auth/me`에 `account {status, deletion_scheduled_for}` → withdrawn이면 "탈퇴 처리 중" 화면, 다른 API는 403 `ACCOUNT_WITHDRAWN`. 탈퇴 = `withdrawal-check` → 관리자 넘길 사람·혼자 쓰던 공간 확인 → `withdrawal` 한 번 (`ADMIN_TRANSFER_REQUIRED`/`SOLE_MEMBER_CONFIRM_REQUIRED` 409 → 다시 확인 화면). 필수 동의 철회 응답 `deletion_scheduled_for` 안내, 다시 동의하면 null. 알림 설정 PUT은 세 값 모두, `noti_consented=false`면 알림 동의 안내. 기기 등록은 앱 실행·토큰 갱신 때, 로그아웃 = 기기 삭제 → `signOut()`
 - [ ] 👤 초대 링크 실제 환경 확인 (앱 링크 도메인 정한 뒤): 카카오톡 내부 브라우저 / iOS Safari / Android Chrome × 앱 설치·미설치 × 로그인 화면 거친 뒤 초대 화면 복귀 — `#t=`가 앱까지 전달되는지 (카카오톡 인앱 브라우저는 앱 링크를 바로 안 열 수 있음 → 미설치 안내 페이지에 "앱에서 열기" 버튼)
 - [ ] 👤 앱 테스트: 로그인 전 링크 클릭 → 가입 → 수락 (토큰 유지), 가입 중단 후 다시 실행, 가입 도중 만료
 - [ ] API 명세서 3장 수정: 초대 토큰은 본문 (`/invites/{token}/accept` → `/invites/accept`), 미리보기·초대 목록·취소·구성원 목록·내보내기 API 추가, 가족 최근 30일 기록 수는 P2로
@@ -27,6 +28,11 @@
 ## 결정이 필요한 것
 
 - [ ] ⚖️ 필수 동의 철회 시 데이터 삭제 시점·범위 (A-SET-001 "예: 7일 뒤") — API 명세서 14.3: 개발자 임의 결정 금지
+- [ ] ⚖️ A-5 삭제 규칙 법률 상담 후 확정 → 그 뒤 운영 `DELETION_EXECUTE_ENABLED=true`
+  - 유예기간 (지금 임시 7일, `deletion_service.GRACE_DAYS`)
+  - 삭제 범위: 내가 쓴 기록·음성, 혼자 쓰던 부모님 공간, 로그인 계정 / 남기는 것: 동의 이력, 사용자 행(이름·번호 지움)
+  - 유예기간 중 탈퇴 되돌리기 (지금 X, 고객센터)
+  - 확정 기록지(보고서)에 근거로 쓰인 기록 삭제 처리 (`report_item_sources` RESTRICT → 지금은 실행 실패·재시도)
 - [ ] ⚖️ 실제 동의 문구 4종 (서비스·개인정보·건강정보·알림) 확정
 - [ ] ⚖️ 부모님 본인 동의·대리 동의 방식 (POL-05, `care_subject_authorizations`)
 - [ ] ⚖️ 가족 공유 근거: 초대 시 관리자 확인 문구(`share_confirmed`) + 수락 시 `family_share` 동의 문구 확정. 부모님 처음 등록하는 관리자도 확인 받을지
@@ -108,7 +114,7 @@
 - [x] A-SET-001 `GET /v1/consents/me` — 현재 동의 + 이력
 - [x] A-SET-001 `POST /v1/consents/{type}/revoke` — 철회 (이력은 남김)
   - [x] 필수 동의 철회 → 기록 기능 중지
-  - [ ] ⚖️ 철회 시 데이터 삭제 예약 + 삭제 예정일 안내
+  - [x] 철회 시 데이터 삭제 예약 + 삭제 예정일 안내 (A-5, `deletion_scheduled_for`, 다시 동의 → 취소). ⚖️ 기간 확정 대기
 - [x] A-ON-003 `POST /v1/parents` — 부모님 등록, 만든 사람 = 관리자 (한 트랜잭션, `Idempotency-Key`)
   - [x] 호칭 1~20자, 나이대·신청 단계 값 검증
   - [x] 이름·주민번호 저장 안 함 (POL-07)
@@ -291,7 +297,7 @@
 - [x] `PATCH /v1/family/{member_id}/role` — admin만 (관리자끼리 동등), 마지막 관리자 409 `LAST_ADMIN`, 강등 시 그 사람 초대 취소
 - [x] `DELETE /v1/family/{member_id}` — 내보내기(admin)·나가기(본인), 기록 유지, 그 사람 초대 취소
 - [x] 마지막 관리자 DB 검사 (역할 변경·삭제·부모님 생성, 공간 삭제는 통과)
-- [ ] A-5 탈퇴: 같은 보호 규칙 (`family_service` 잠금 순서) 사용
+- [x] A-5 탈퇴: 같은 보호 규칙, 잠금 순서 사용자 → 부모님(id 순). 부모님 등록·초대 수락도 사용자 먼저
 - [ ] 배포 설정: `INVITE_BASE_URL`(앱 링크 도메인), `TRUSTED_PROXY_HOPS`(프록시 수)
 - [ ] 👤 Flutter: 초대 링크로 가입 시 부모님 등록 단계 건너뛰기
 
@@ -312,8 +318,9 @@
 
 ### 알림 — POP_A_NOTI / A-SET-002
 - [ ] `GET /v1/notifications`, `PATCH /v1/notifications/{id}/read`
-- [ ] `GET`·`PUT /v1/settings/notifications` — 컨디션·할 일·브리핑 켜기/끄기
-- [ ] `POST /v1/devices`, `DELETE /v1/devices/{id}` — FCM 토큰
+- [x] `GET`·`PUT /v1/settings/notifications` — 컨디션·할 일·브리핑 켜기/끄기, `noti_consented` (A-5)
+- [x] `POST /v1/devices`, `DELETE /v1/devices/{id}` — FCM 토큰, 같은 토큰 1건 (A-5)
+- [ ] 발송 조건: `noti` 동의 + 해당 설정 켜짐 + 끄지 않은 기기
 - [ ] FCM 발송 연동
 - [ ] 정기 알림: 조사 전날 20:00 브리핑, 컨디션 저녁 8시, 체크리스트 기한 다음 날 10:00 (꺼 두면 발송 안 함)
 
@@ -342,7 +349,15 @@
 - [ ] W-NHI-001 공단 서류 사진 쉬운 설명 (OCR, 즉시 삭제, 개별 판단은 공단 안내)
 - [ ] W-RNW-001/002 갱신 준비: 판정일 전후 건수, 새 기록지
 - [ ] W-LOG-002 QR 웹 로그인 — QR 세션 테이블·안전한 세션 전달 설계 먼저
-- [ ] A-SET-003 로그아웃·탈퇴 (관리자 탈퇴 시 관리자 넘기기), 삭제 요청 API
+- [x] A-SET-003 로그아웃·탈퇴 (A-5, `migrations/007`)
+  - [x] `GET /v1/users/me/withdrawal-check` — 부모님별 ok / transfer_required / sole_member
+  - [x] `POST /v1/users/me/withdrawal` — 관리자 넘기기 같은 요청 안에서, 혼자 쓰던 공간 확인, 실패 시 변경 없음, 재요청 같은 결과
+  - [x] 탈퇴 뒤 `/auth/me`만 응답 (`account.status=withdrawn`), 나머지 403 `ACCOUNT_WITHDRAWN`
+  - [x] 남은 기록·수정 이력 작성자 "탈퇴한 가족"
+  - [x] 삭제 실행 (워커, 설정으로 꺼 둠): 음성 → 로그인 계정(soft delete) → DB, 실패 시 재시도
+  - [ ] 로그아웃 뒤 이전 access token 거부되는지 확인 (Supabase signOut)
+  - [ ] 개발 DB에서 실제 Supabase 계정 soft delete 1회 확인 (같은 카카오로 재가입 가능한지)
+  - [ ] 👤 Flutter: 로그아웃 = `DELETE /devices/{id}` → `signOut()`, 탈퇴 화면 (확인 → 관리자 넘기기 → 혼자 쓰던 공간 확인)
 - [x] `PATCH /v1/auth/me` — 본인 표시 이름 (A-1). `GET /v1/auth/me`에 `display_name`, `name_set`
 
 ### P2
@@ -363,7 +378,8 @@
 - [ ] 워커 개수 결정 (긴 받아쓰기가 대기열을 막지 않게, 여러 개 동시 실행 가능)
 - [ ] 운영·스테이징 `CURSOR_SECRET` 필수 (없으면 시작 안 됨, 긴 임의 문자열)
 - [ ] 운영 `AI_PROVIDER=real` 필수 — AI 합치기 전에는 운영 서버·워커가 시작 안 됨 (의도)
-- [ ] 동의 철회·기록 삭제 시 음성 파일도 삭제
+- [ ] 운영 `DELETION_EXECUTE_ENABLED` — ⚖️ 삭제 규칙 확정 전 false (기본값). 워커에 `SUPABASE_SECRET_KEY` 필요 (음성·로그인 계정 삭제)
+- [x] 동의 철회·탈퇴 삭제 실행 시 음성 파일도 삭제 (A-5)
 - [ ] HTTPS, CORS(웹 도메인만), 로그·오류 모니터링
 - [ ] 성능 확인: 음성 1분 → 10초, 현황판 3초
 - [ ] 권한 테스트 보강 (TS-7: 역할별·타 가족 접근·마지막 관리자)

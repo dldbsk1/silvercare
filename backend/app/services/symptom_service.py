@@ -1,7 +1,7 @@
 """증상 기록 (A-SYM-001/002)
 
 증상 칩 6개 (추천)
-- 후보: 조사표 52항목 중 증상으로 볼 수 있는 행동변화 14 · 인지 7 (신체·간호·재활 → 증상 X)
+- 후보: 조사표 52항목 중 증상으로 볼 수 있는 행동변화 14 · 인지 7 · 신체 6 (그 밖 신체·간호·재활 → 증상 X)
 - 우리 가족 기록 (최근 SUGGEST_DAYS 일, 모든 입력 방식) 에서 많이 분류된 항목 순
 - 기록 적음 (후보 항목으로 분류된 기록 < SUGGEST_MIN_RECORDS) → 기본 6개 (디자인 키워드)
 - 6개 안 차면 기본 키워드로 채움 · 같은 수 → 기본 순서 → 조사표 순서
@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.repositories import record_repo, symptom_repo
-from app.schemas.symptoms import CUSTOM, SymptomIn, SymptomWeeklyQuery
-from app.services import classification_service
+from app.schemas.symptoms import CUSTOM, SymptomIn, SymptomUpdateIn, SymptomWeeklyQuery
+from app.services import classification_service, record_service
 from app.services.access import ParentAccess, ensure_write
 from app.services.dday import KST
 from app.services.record_service import check_times
@@ -121,8 +121,14 @@ def suggestions(db: Session, access: ParentAccess, now: datetime | None = None) 
 
 def record_text(body: SymptomIn) -> str:
     """기록함·상세에 보이는 글. 예: 밤에 헤매 · 새벽 · 2번\n새벽 3시에 현관문을 열려고 하심"""
-    head = f"{label_of(body.symptom_type, body.custom_label)} · {TIME_BAND_LABELS[body.time_band]} · {body.occurrence_count}번"
-    return f"{head}\n{body.note}" if body.note else head
+    return compose_text(
+        label_of(body.symptom_type, body.custom_label), body.time_band, body.occurrence_count, body.note
+    )
+
+
+def compose_text(label: str, time_band: str, count: int, note: str | None) -> str:
+    head = f"{label} · {TIME_BAND_LABELS[time_band]} · {count}번"
+    return f"{head}\n{note}" if note else head
 
 
 def create(db: Session, access: ParentAccess, body: SymptomIn) -> dict:
@@ -161,6 +167,40 @@ def create(db: Session, access: ParentAccess, body: SymptomIn) -> dict:
         "time_band": body.time_band,
         "occurrence_count": body.occurrence_count,
     }
+
+
+# ── 수정 ──
+
+def update(db: Session, user_id: str, record_id: str, body: SymptomUpdateIn) -> dict:
+    """시간대·횟수·메모 → 기록 글 다시 만듦 (이력 changed = text)
+
+    - 실제 바뀐 값 없음 → 이력·순번 그대로
+    - 분류: 조사표 항목 → 사용자 분류 그대로 / 직접 입력 + AI 분류 → 새 글로 다시 분류
+    """
+    sent = set(body.model_fields_set) - {"base_version"}
+    if not sent:
+        raise AppError(400, "INVALID_REQUEST", "바꿀 내용이 없어요.")
+    for field in ("time_band", "occurrence_count"):
+        if field in sent and getattr(body, field) is None:
+            raise AppError(422, "VALIDATION_ERROR", "비울 수 없는 항목이에요.", details={"fields": [field]})
+
+    access, record = record_service.record_access(db, user_id, record_id, for_update=True)
+    record_service.ensure_author(access, record)
+    symptom = symptom_repo.get(db, record_id) if record["input_type"] == "symptom" else None
+    if symptom is None:
+        raise AppError(400, "INVALID_REQUEST", "증상 기록이 아니에요.")
+
+    band = body.time_band if "time_band" in sent else symptom["time_band"]
+    count = body.occurrence_count if "occurrence_count" in sent else symptom["occurrence_count"]
+    note = (body.note or None) if "note" in sent else symptom["note"]
+
+    if (band, count, note) != (symptom["time_band"], symptom["occurrence_count"], symptom["note"]):
+        new_text = compose_text(label_of(symptom["symptom_type"], symptom["custom_label"]), band, count, note)
+        # 충돌 검사 → 그 뒤 증상 행 변경 (save_edit 안에서 409 나면 트랜잭션째 취소)
+        record_service.save_edit(db, record, user_id, body.base_version, {"current_text": new_text}, None)
+        symptom_repo.update(db, record_id, band, count, note)
+
+    return record_service.to_detail(db, record_repo.get_record(db, record_id), user_id)
 
 
 # ── 최근 4주 ──

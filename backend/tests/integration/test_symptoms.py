@@ -52,11 +52,11 @@ def test_save_preset_classified_at_once(client, db, user_id, parent_id):
     response = save(client, parent_id, note="새벽 3시에 현관문을 열려고 하심")
     assert response.status_code == 201, response.text
     data = response.json()["data"]
-    assert data["label"] == "물건 숨기기" and data["occurrence_count"] == 2
+    assert data["label"] == "물건 감추기" and data["occurrence_count"] == 2
 
     record = client.get(f"/v1/records/{data['record_id']}").json()["data"]
     assert record["input_type"] == "symptom"
-    assert record["current_text"] == "물건 숨기기 · 밤 · 2번\n새벽 3시에 현관문을 열려고 하심"
+    assert record["current_text"] == "물건 감추기 · 밤 · 2번\n새벽 3시에 현관문을 열려고 하심"
     assert record["classification_status"] == "classified"
     assert [i["item_code"] for i in record["items"]] == ["beh_hiding"]
     # AI 작업 없음
@@ -79,8 +79,8 @@ def test_save_validation(client, parent_id):
     assert save(client, parent_id, time_band="noon").status_code == 422
     assert save(client, parent_id, occurrence_count=0).status_code == 422
     assert save(client, parent_id, occurrence_count=21).status_code == 422
-    # 신체 항목 → 증상 후보 X
-    assert save(client, parent_id, symptom_type="phys_dressing").status_code == 400
+    # 후보 밖 항목 (목욕 등) → 증상 후보 X
+    assert save(client, parent_id, symptom_type="phys_bathing").status_code == 400
 
 
 def test_viewer_cannot_save(client, db, consent_docs, parent_id):
@@ -103,7 +103,7 @@ def test_suggestions_default_when_few_records(client, db, user_id, parent_id):
     data = suggestions(client, parent_id)
     assert data["source"] == "default"
     assert [i["label"] for i in data["items"]] == [
-        "밤에 헤매", "환청·환각", "길 잃음", "같은 말 반복", "화내기·폭언", "물건 숨기기",
+        "수면 패턴 변화", "환청·환각", "길을 잃음", "최근 일 잊어버림", "폭언·위협", "물건 감추기",
     ]
 
 
@@ -113,8 +113,8 @@ def test_suggestions_personal_from_all_records(client, db, user_id, parent_id):
         add_classified_text(db, parent_id, user_id, "beh_going_out")
     for _ in range(2):
         add_classified_text(db, parent_id, user_id, "cog_date_disorient")
-    # 신체 항목 → 후보 X
-    add_classified_text(db, parent_id, user_id, "phys_dressing")
+    # 후보 밖 항목 → X
+    add_classified_text(db, parent_id, user_id, "phys_bathing")
     # 오래된 기록 → 제외
     add_classified_text(db, parent_id, user_id, "beh_breaking", days_ago=120)
 
@@ -150,7 +150,7 @@ def test_weekly_sums_counts_by_week(client, db, user_id, parent_id):
     response = weekly(client, parent_id, symptom_type="beh_hiding")
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["label"] == "물건 숨기기"
+    assert data["label"] == "물건 감추기"
     assert [w["count"] for w in data["weeks"]] == [0, 2, 0, 4]
     assert data["weeks"][-1]["week_start"] == this_monday.date().isoformat()
 

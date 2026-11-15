@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from app.services import dday
-from tests.integration.conftest import join_family, run_sql
+from tests.integration.conftest import join_family, patch_record, run_sql
 
 
 def today():
@@ -253,7 +253,7 @@ def test_versions_three_edits(client, db, parent_id):
 def test_versions_multiple_fields_one_edit(client, parent_id):
     record_id = create_text(client, parent_id)
 
-    client.patch(f"/v1/records/{record_id}", json={
+    patch_record(client, f"/v1/records/{record_id}", json={
         "current_text": "고침", "source": "call", "item_codes": []
     })
 
@@ -264,7 +264,7 @@ def test_versions_multiple_fields_one_edit(client, parent_id):
 
 def test_versions_visible_to_family_viewer(client, db, consent_docs, parent_id):
     record_id = create_text(client, parent_id)
-    client.patch(f"/v1/records/{record_id}", json={"current_text": "고침"})
+    patch_record(client, f"/v1/records/{record_id}", json={"current_text": "고침"})
 
     join_family(db, client, consent_docs, parent_id, "viewer")
     history = client.get(f"/v1/records/{record_id}/versions").json()["data"]["history"]
@@ -276,7 +276,7 @@ def test_version_number_unique_in_db(client, db, user_id, parent_id):
     from sqlalchemy.exc import DBAPIError
 
     record_id = create_text(client, parent_id)
-    client.patch(f"/v1/records/{record_id}", json={"current_text": "고침"})
+    patch_record(client, f"/v1/records/{record_id}", json={"current_text": "고침"})
 
     with pytest.raises(DBAPIError):
         run_sql(
@@ -304,7 +304,7 @@ def test_display_name_and_author_name(client, db, consent_docs, parent_id):
     data = response.json()["data"]
     assert data["user"]["display_name"] == "홍길동" and data["onboarding"]["name_set"] is True
 
-    client.patch(f"/v1/records/{record_id}", json={"current_text": "고침"})
+    patch_record(client, f"/v1/records/{record_id}", json={"current_text": "고침"})
 
     # 다른 가족이 볼 때 이름 표시, 이름 변경 → 과거 기록도 반영
     author_id = data["user"]["id"]

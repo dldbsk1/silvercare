@@ -64,3 +64,24 @@ def weekly_counts(
         """),
         {"p": parent_id, "t": symptom_type, "label": custom_label, "start": start}
     ).all()
+
+
+def get(db: Session, record_id: str):
+    return db.execute(
+        text("""
+            SELECT symptom_type, custom_label, time_band::text AS time_band, occurrence_count, note
+            FROM record_symptoms WHERE record_id = :r
+        """),
+        {"r": record_id}
+    ).mappings().first()
+
+
+def update(db: Session, record_id: str, time_band: str, occurrence_count: int, note: str | None):
+    db.execute(
+        text("""
+            UPDATE record_symptoms
+            SET time_band = :band, occurrence_count = :n, note = :note
+            WHERE record_id = :r
+        """),
+        {"r": record_id, "band": time_band, "n": occurrence_count, "note": note}
+    )

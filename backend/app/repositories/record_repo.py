@@ -410,3 +410,11 @@ def save_transcript(
         }
     )
     db.execute(text("SELECT set_config('app.writer', '', true)"))
+
+
+def edit_version(db: Session, record_id: str) -> int:
+    """사용자 수정 순번 (record_versions 최댓값, 수정 없음 → 0). 동시 수정 비교 기준"""
+    return db.execute(
+        text("SELECT COALESCE(max(version), 0) FROM record_versions WHERE record_id = :id"),
+        {"id": record_id}
+    ).scalar_one()

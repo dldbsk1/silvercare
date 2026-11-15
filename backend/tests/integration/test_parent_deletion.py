@@ -5,7 +5,7 @@ import pytest
 
 from app.core.config import settings
 from app.services import parent_deletion_service
-from tests.integration.conftest import claim_job, join_family, run_sql, sql_scalar
+from tests.integration.conftest import claim_job, join_family, patch_record, run_sql, sql_scalar
 from tests.integration.test_voice_records import fake_storage, new_voice_record  # noqa: F401
 
 
@@ -147,7 +147,7 @@ def count(db, query, **params):
 def test_execute_deletes_everything(client, db, consent_docs, user_id, parent_id, executor):
     text_id = create_text(client, parent_id).json()["data"]["id"]
     # 글 고침 → 수정 이력
-    assert client.patch(f"/v1/records/{text_id}", json={"current_text": "고친 글"}).status_code == 200
+    assert patch_record(client, f"/v1/records/{text_id}", json={"current_text": "고친 글"}).status_code == 200
     assert count(db, "SELECT count(*) FROM record_versions WHERE record_id = :a", a=text_id) > 0
     voice_id = new_voice_record(client, executor, parent_id)
     # DB 에 없는 고아 파일 (업로드만 하고 저장 안 함)

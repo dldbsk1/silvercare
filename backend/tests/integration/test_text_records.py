@@ -7,7 +7,7 @@ from sqlalchemy.exc import DBAPIError
 from app.ai.interfaces import ItemClassification
 from app.workers.tasks import JobSuperseded
 from app.workers.tasks import records as record_tasks
-from tests.integration.conftest import claim_job, fail_final, join_family, run_sql, sql_scalar
+from tests.integration.conftest import claim_job, fail_final, join_family, patch_record, run_sql, sql_scalar
 
 
 def create(client, parent_id, text="식사: 반찬을 작게 잘라 드려야 드셨어요.", **extra):
@@ -264,7 +264,7 @@ def test_edit_during_classification_supersedes_old_job(client, db, parent_id):
     record_id = create(client, parent_id, "밥 드셨어요").json()["data"]["id"]
     run_classify(db, record_id, 1)
 
-    response = client.patch(f"/v1/records/{record_id}", json={"current_text": "현관문을 열려고 하셨어요"})
+    response = patch_record(client, f"/v1/records/{record_id}", json={"current_text": "현관문을 열려고 하셨어요"})
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["text_version"] == 2
@@ -306,7 +306,7 @@ def test_stale_result_discarded_when_text_changes_mid_ai_call(client, db, parent
 def test_edit_keeps_original_and_history(client, db, parent_id):
     record_id = create(client, parent_id, "원래 글").json()["data"]["id"]
 
-    data = client.patch(f"/v1/records/{record_id}", json={"current_text": "고친 글", "source": "call"}).json()["data"]
+    data = patch_record(client, f"/v1/records/{record_id}", json={"current_text": "고친 글", "source": "call"}).json()["data"]
 
     assert data["original_text"] == "원래 글"
     assert data["current_text"] == "고친 글"
@@ -320,7 +320,7 @@ def test_user_classification_priority(client, db, parent_id):
     record_id = create(client, parent_id, "밥 드셨어요").json()["data"]["id"]
     run_classify(db, record_id, 1)
 
-    data = client.patch(f"/v1/records/{record_id}", json={"item_codes": ["cog_short_memory", "phys_eating"]}).json()["data"]
+    data = patch_record(client, f"/v1/records/{record_id}", json={"item_codes": ["cog_short_memory", "phys_eating"]}).json()["data"]
     assert data["classified_by"] == "user"
     assert data["processing_status"] == "completed"
     assert {(i["item_code"], i["set_by"]) for i in data["items"]} == {
@@ -328,7 +328,7 @@ def test_user_classification_priority(client, db, parent_id):
     }
 
     # 글을 고쳐도 사용자 분류 유지, AI 작업 없음
-    data = client.patch(f"/v1/records/{record_id}", json={"current_text": "현관"}).json()["data"]
+    data = patch_record(client, f"/v1/records/{record_id}", json={"current_text": "현관"}).json()["data"]
     assert data["classified_by"] == "user" and len(data["items"]) == 2
     assert len(jobs_of(db, record_id)) == 1
 
@@ -352,7 +352,7 @@ def test_user_classification_priority(client, db, parent_id):
 def test_user_can_choose_unclassified(client, parent_id):
     record_id = create(client, parent_id).json()["data"]["id"]
 
-    data = client.patch(f"/v1/records/{record_id}", json={"item_codes": []}).json()["data"]
+    data = patch_record(client, f"/v1/records/{record_id}", json={"item_codes": []}).json()["data"]
 
     assert data["classification_status"] == "unclassified"
     assert data["classified_by"] == "user"
@@ -361,7 +361,7 @@ def test_user_can_choose_unclassified(client, parent_id):
 def test_user_classification_only_from_52_items(client, parent_id):
     record_id = create(client, parent_id).json()["data"]["id"]
 
-    response = client.patch(f"/v1/records/{record_id}", json={"item_codes": ["phys_eating", "감정"]})
+    response = patch_record(client, f"/v1/records/{record_id}", json={"item_codes": ["phys_eating", "감정"]})
 
     assert response.status_code == 400
     assert response.json()["error"]["details"] == {"unknown_codes": ["감정"]}
@@ -379,7 +379,7 @@ def test_user_classification_only_from_52_items(client, parent_id):
 def test_update_validation(client, parent_id, body, status, code):
     record_id = create(client, parent_id).json()["data"]["id"]
 
-    response = client.patch(f"/v1/records/{record_id}", json=body)
+    response = patch_record(client, f"/v1/records/{record_id}", json=body)
 
     assert response.status_code == status
     assert response.json()["error"]["code"] == code
@@ -391,7 +391,7 @@ def test_only_author_can_edit_or_reclassify(client, db, consent_docs, parent_id)
     join_family(db, client, consent_docs, parent_id, "admin")
 
     assert client.get(f"/v1/records/{record_id}").status_code == 200
-    assert client.patch(f"/v1/records/{record_id}", json={"current_text": "남이 고침"}).status_code == 403
+    assert patch_record(client, f"/v1/records/{record_id}", json={"current_text": "남이 고침"}).status_code == 403
     fail_classify(db, record_id, 1)
     assert client.post(f"/v1/records/{record_id}/reclassify").status_code == 403
 

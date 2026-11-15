@@ -12,6 +12,7 @@ from tests.integration.conftest import (
     claim_job,
     fail_final,
     join_family,
+    patch_record,
     run_sql,
 )
 
@@ -77,7 +78,7 @@ def test_edit_and_exclude_while_paging(client, parent_id):
     assert ids_of(first) == [created[4], created[3]]
 
     # 다음 페이지 보기 전: 받은 기록 수정, 아직 안 본 기록 제외
-    client.patch(f"/v1/records/{created[4]}", json={"current_text": "고침"})
+    patch_record(client, f"/v1/records/{created[4]}", json={"current_text": "고침"})
     client.post(f"/v1/records/{created[2]}/exclude")
 
     rest = records(client, parent_id, f"limit=10&cursor={first['meta']['next_cursor']}").json()
@@ -141,7 +142,7 @@ def test_cursor_from_other_parent(client, parent_id):
 
 def test_search_current_text_only(client, parent_id):
     record_id = create(client, parent_id, "점심에 국수 드셨어요")
-    client.patch(f"/v1/records/{record_id}", json={"current_text": "점심에 죽 드셨어요"})
+    patch_record(client, f"/v1/records/{record_id}", json={"current_text": "점심에 죽 드셨어요"})
 
     assert ids(records(client, parent_id, "q=국수")) == []
     assert ids(records(client, parent_id, "q=죽")) == [record_id]
@@ -212,7 +213,7 @@ def test_user_cleared_classification_is_unclassified(client, db, parent_id):
     record_id = create(client, parent_id, "밥 드셨어요")
     classify(db, record_id)
 
-    client.patch(f"/v1/records/{record_id}", json={"item_codes": []})
+    patch_record(client, f"/v1/records/{record_id}", json={"item_codes": []})
 
     assert ids(records(client, parent_id, "classification_status=unclassified")) == [record_id]
 
@@ -289,12 +290,12 @@ def test_is_edited_only_by_user_edits(client, db, parent_id):
     assert is_edited() is False
 
     # AI 분류 그대로 확정 → 분류 주체만 user, 이력 X
-    response = client.patch(f"/v1/records/{record_id}", json={"item_codes": ["phys_eating"]})
+    response = patch_record(client, f"/v1/records/{record_id}", json={"item_codes": ["phys_eating"]})
     assert response.json()["data"]["classified_by"] == "user"
     assert client.get(f"/v1/records/{record_id}/versions").json()["data"]["history"] == []
     assert is_edited() is False
 
-    client.patch(f"/v1/records/{record_id}", json={"source": "call"})
+    patch_record(client, f"/v1/records/{record_id}", json={"source": "call"})
     assert is_edited() is True
     assert client.get(f"/v1/records/{record_id}").json()["data"]["is_edited"] is True
 
@@ -307,7 +308,7 @@ def test_is_edited_text_or_classification(client, db, parent_id, body):
     record_id = create(client, parent_id, "밥 드셨어요")
     classify(db, record_id)
 
-    client.patch(f"/v1/records/{record_id}", json=body)
+    patch_record(client, f"/v1/records/{record_id}", json=body)
 
     assert records(client, parent_id).json()["data"][0]["is_edited"] is True
 

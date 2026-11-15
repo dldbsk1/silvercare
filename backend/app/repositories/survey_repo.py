@@ -17,3 +17,10 @@ def existing_codes(db: Session, codes: list[str]) -> set[str]:
 
 def all_codes(db: Session) -> set[str]:
     return set(db.execute(text("SELECT code FROM survey_items")).scalars())
+
+
+def list_items(db: Session):
+    """52항목 (조사표 순서). 분류 바꾸기 목록"""
+    return db.execute(
+        text("SELECT code, area::text AS area, label, sort_order FROM survey_items ORDER BY sort_order")
+    ).mappings().all()

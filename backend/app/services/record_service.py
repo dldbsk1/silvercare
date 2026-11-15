@@ -15,7 +15,7 @@ from app.ai.provider import stt_configured
 from app.core.config import settings
 from app.core.errors import AppError, service_unavailable
 from app.db import storage
-from app.repositories import record_repo, survey_repo, upload_repo
+from app.repositories import record_repo, survey_repo, symptom_repo, upload_repo
 from app.repositories.record_repo import RecordFilter
 from app.schemas.records import (
     IMMUTABLE_FIELDS,
@@ -107,11 +107,23 @@ def to_detail(db: Session, record, user_id: str) -> dict:
         "original_text": record["original_text"],
         "classified_by": record["classified_by"],
         "text_version": record["text_version"],
+        "edit_version": record_repo.edit_version(db, record["id"]),
+        "symptom": symptom_of(db, record),
         "audio_duration_seconds": record["audio_duration_seconds"],
         "items": [dict(i) for i in record_repo.get_items(db, record["id"])],
         "created_at": record["created_at"],
         "updated_at": record["updated_at"],
     }
+
+
+def symptom_of(db: Session, record) -> dict | None:
+    if record["input_type"] != "symptom":
+        return None
+    row = symptom_repo.get(db, record["id"])
+    if row is None:
+        return None
+    from app.services.symptom_service import label_of  # 순환 import 방지
+    return {**row, "label": label_of(row["symptom_type"], row["custom_label"])}
 
 
 def check_times(recorded_at: datetime, occurred_at: datetime | None):
@@ -346,8 +358,12 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
     - item_codes 보냄 → 사용자 분류 (52항목만, AI 작업 없음)
     - 글만 변경 + AI 분류 기록 → 이전 분류 삭제 + 새 버전 분류 작업 등록
     - 글만 변경 + 사용자 분류 기록 → 사용자 분류 유지
+    - 증상 기록 글 → 증상 수정으로만 (글 = 증상·시간대·횟수에서 만듦)
     """
     sent = check_patch(body, IMMUTABLE_FIELDS, nullable={"occurred_at"})
+    sent.discard("base_version")
+    if not sent:
+        raise AppError(400, "INVALID_REQUEST", "바꿀 내용이 없어요.")
 
     access, record = record_access(db, user_id, record_id, for_update=True)
     ensure_author(access, record)
@@ -356,6 +372,10 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
     fields = {}
 
     if "current_text" in sent and body.current_text != record["current_text"]:
+        if record["input_type"] == "symptom":
+            raise AppError(
+                409, "USE_SYMPTOM_EDIT", "증상 기록은 증상 고치기에서 바꿀 수 있어요."
+            )
         check_text_length(record, body.current_text)
         fields["current_text"] = body.current_text
 
@@ -367,10 +387,7 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
             check_times(record["recorded_at"], body.occurred_at)
         fields["occurred_at"] = body.occurred_at
 
-    old_codes = [i["item_code"] for i in record_repo.get_items(db, record_id)]
     new_codes = None
-    codes_changed = False
-
     if "item_codes" in sent:
         unknown = set(body.item_codes) - survey_repo.existing_codes(db, body.item_codes)
         if unknown:
@@ -378,23 +395,56 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
                 400, "INVALID_REQUEST", "조사표 항목에서만 고를 수 있어요.",
                 details={"unknown_codes": sorted(unknown)}
             )
-        if set(body.item_codes) != set(old_codes) or record["classified_by"] != "user":
-            new_codes = body.item_codes
-        # AI 분류 그대로 확정 → 분류 주체만 user, 수정 이력 X (is_edited 유지)
-        codes_changed = (
-            set(body.item_codes) != set(old_codes)
-            or record["classification_status"] is None
+        new_codes = body.item_codes
+
+    save_edit(db, record, user_id, body.base_version, fields, new_codes)
+    return to_detail(db, record_repo.get_record(db, record_id), user_id)
+
+
+def ensure_base_version(db: Session, record_id: str, base_version: int):
+    """동시 수정: 화면에서 본 순번 ≠ 현재 순번 → 409 (다른 기기에서 먼저 저장)"""
+    current = record_repo.edit_version(db, record_id)
+    if base_version != current:
+        raise AppError(
+            409, "EDIT_CONFLICT", "다른 곳에서 먼저 고쳤어요. 최신 내용을 불러올게요.",
+            details={"edit_version": current}
         )
 
-    if not fields and new_codes is None:
-        return to_detail(db, record, user_id)
 
-    # 이력: 수정 전 상태 + 실제로 바뀐 칸 (기록 행 잠금 안에서 순번 결정)
+def save_edit(
+    db: Session,
+    record,
+    user_id: str,
+    base_version: int,
+    fields: dict,
+    new_codes: list[str] | None,
+):
+    """실제 바뀐 칸만 저장 (기록 행 잠금 안). 바뀐 것 없음 → 이력·순번 그대로
+
+    fields: current_text / source / occurred_at 중 값이 달라진 것
+    new_codes: 보낸 분류 (None → 안 보냄)
+    - AI 분류 그대로 확정 → 분류 주체만 user, 이력 X (순번 그대로, 충돌 검사 X)
+    """
+    record_id = str(record["id"])
+    old_codes = [i["item_code"] for i in record_repo.get_items(db, record_id)]
+
+    codes_changed = new_codes is not None and (
+        set(new_codes) != set(old_codes) or record["classification_status"] is None
+    )
+    confirm_only = (
+        new_codes is not None and not codes_changed and record["classified_by"] != "user"
+    )
+
     changed = [VERSION_FIELDS[f] for f in fields]
     if codes_changed:
         changed.append("item_codes")
 
+    if not changed and not confirm_only:
+        return
+
     if changed:
+        ensure_base_version(db, record_id, base_version)
+        # 이력: 수정 전 상태 + 실제로 바뀐 칸 (기록 행 잠금 안에서 순번 결정)
         record_repo.insert_version(
             db, record_id,
             text_value=record["current_text"],
@@ -410,7 +460,7 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
     if fields:
         text_version = record_repo.update_fields(db, record_id, fields)
 
-    if new_codes is not None:
+    if codes_changed or confirm_only:
         record_repo.replace_items(db, record_id, [(c, None) for c in new_codes], "user")
         record_repo.set_classification(
             db, record_id,
@@ -423,8 +473,6 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
         record_repo.replace_items(db, record_id, [], "ai")
         record_repo.set_classification(db, record_id, None, None, "pending")
         classification_service.enqueue_classification(db, record_id, text_version)
-
-    return to_detail(db, record_repo.get_record(db, record_id), user_id)
 
 
 def ensure_transcribed(record):
@@ -470,6 +518,7 @@ def get_versions(db: Session, user_id: str, record_id: str) -> dict:
     items = record_repo.get_items(db, record_id)
 
     return {
+        "edit_version": record_repo.edit_version(db, record_id),
         "original_text": record["original_text"],
         "current": {
             "text": record["current_text"],

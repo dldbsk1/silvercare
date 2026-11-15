@@ -194,3 +194,10 @@ def fail_final(db, job, code=None):
     from app.workers.tasks import TASKS
 
     worker.fail_job(db, TASKS[job.type], job, code, code or "test failure")
+
+
+def patch_record(client, url, json):
+    """PATCH /v1/records/{id} + 지금 순번 (base_version). 조회 못 함 → 0"""
+    detail = client.get(url)
+    base = detail.json()["data"]["edit_version"] if detail.status_code == 200 else 0
+    return client.patch(url, json={"base_version": base, **json})

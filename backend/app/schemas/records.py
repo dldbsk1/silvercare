@@ -81,7 +81,12 @@ IMMUTABLE_FIELDS = {
 
 
 class RecordUpdateIn(BaseModel):
-    """작성자만. 보낸 필드만 변경. occurred_at: null → 비움"""
+    """작성자만. 보낸 필드만 변경. occurred_at: null → 비움
+
+    base_version: 화면에서 본 edit_version. 실제 변경 있음 + 현재 순번과 다름 → 409 EDIT_CONFLICT
+    """
+
+    base_version: int = Field(ge=0)
 
     # 텍스트 1000자 / 음성 2000자 (서비스에서 input_type별 확인)
     current_text: str | None = Field(None, min_length=1, max_length=VOICE_TEXT_MAX_LENGTH)
@@ -164,10 +169,22 @@ class RecordListItemOut(BaseModel):
     occurred_at: datetime | None
 
 
+class RecordSymptomOut(BaseModel):
+    symptom_type: str
+    label: str
+    time_band: str
+    occurrence_count: int
+    note: str | None
+
+
 class RecordOut(RecordListItemOut):
     original_text: str | None
     classified_by: SetBy | None
     text_version: int
+    # 사용자 수정 순번 (실제 변경 저장마다 +1, 수정 없음 → 0). PATCH base_version 기준
+    edit_version: int
+    # 증상 기록만
+    symptom: RecordSymptomOut | None = None
     audio_duration_seconds: int | None
     items: list[RecordItemOut]
     created_at: datetime
@@ -215,6 +232,16 @@ class RecordVersionOut(BaseModel):
 
 
 class RecordVersionsOut(BaseModel):
+    edit_version: int
     original_text: str | None
     current: RecordSnapshotOut
     history: list[RecordVersionOut]
+
+
+# ── 조사표 항목 ──
+
+class SurveyItemOut(BaseModel):
+    code: str
+    area: Area
+    label: str
+    sort_order: int

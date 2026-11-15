@@ -4,12 +4,14 @@ from uuid import UUID
 from fastapi import APIRouter, Query, status
 from fastapi.responses import JSONResponse
 
-from app.api.deps import DbSession, IdempotencyKey, ReadAccess, WriteAccess
+from app.api.deps import ConsentedUser, DbSession, IdempotencyKey, ReadAccess, WriteAccess
 from app.schemas.common import DataResponse
+from app.schemas.records import RecordOut
 from app.schemas.symptoms import (
     SymptomCreatedOut,
     SymptomIn,
     SymptomSuggestionsOut,
+    SymptomUpdateIn,
     SymptomWeeklyOut,
     SymptomWeeklyQuery,
 )
@@ -59,3 +61,10 @@ def get_weekly(
     """최근 4주 증상 횟수 (A-SYM-002). 이번 주 포함, 월요일 시작"""
     with db.begin():
         return {"data": symptom_service.weekly(db, access, query)}
+
+
+@router.patch("/records/{record_id}/symptom", response_model=DataResponse[RecordOut])
+def update_symptom(record_id: UUID, body: SymptomUpdateIn, user: ConsentedUser, db: DbSession):
+    """증상 기록 고치기 (작성자만). 시간대·횟수·메모 → 기록 글 다시 만듦 + 수정 이력"""
+    with db.begin():
+        return {"data": symptom_service.update(db, user.id, str(record_id), body)}

@@ -76,3 +76,15 @@ class SymptomWeeklyQuery(BaseModel):
     custom_label: str | None = Field(None, min_length=1, max_length=20)
 
     model_config = {"str_strip_whitespace": True, "extra": "forbid"}
+
+
+class SymptomUpdateIn(BaseModel):
+    """증상 기록 수정 (작성자만). 보낸 칸만. note: null 또는 "" → 비움
+    기록 글 다시 만듦 + 수정 이력. base_version → RecordUpdateIn과 같음"""
+
+    base_version: int = Field(ge=0)
+    time_band: TimeBand | None = None
+    occurrence_count: int | None = Field(None, ge=1, le=OCCURRENCE_MAX)
+    note: str | None = Field(None, max_length=NOTE_MAX_LENGTH)
+
+    model_config = {"str_strip_whitespace": True, "extra": "forbid"}

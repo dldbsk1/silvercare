@@ -222,7 +222,8 @@
 | GET | `/v1/parents/{parent_id}/records` | A-LIST-001/002/003 | P1(최근 3개 P0) | 최신 목록·필터·검색(P2) |
 | GET | `/v1/records/{record_id}` | A-DET-001 | P1 | 본문·원본·AI 항목·작성자 |
 | GET | `/v1/records/{record_id}/audio` | A-DET-001 | P1 | 권한 확인 후 제한적 재생 링크 |
-| PATCH | `/v1/records/{record_id}` | A-DET-002 | P1 | 작성자만 본문·출처·분류 변경, 이력 생성 |
+| PATCH | `/v1/records/{record_id}` | A-DET-002 | P1 | 작성자만 본문·출처·분류 변경, 이력 생성. `base_version`(본 `edit_version`) 필수 → 실제 변경 있음 + 순번 다름 → 409 `EDIT_CONFLICT`. 바뀐 값 없음 → 이력·순번 그대로. 증상 기록 글 → 409 `USE_SYMPTOM_EDIT` |
+| GET | `/v1/survey/items` | A-DET-002 | P1 | 조사표 52항목(영역·코드·이름·순서), 분류 바꾸기 목록(설계 추가) |
 | POST | `/v1/records/{record_id}/exclude` | A-DET-003 | P1 | 작성자, `status=excluded`로 변경 |
 | GET | `/v1/records/{record_id}/versions` | A-DET-002 | P1 | 원문·수정본·작성자·시각 |
 | POST | `/v1/records/{record_id}/comments` | A-DET-002 | P1 | 가족 타인 기록 댓글 |
@@ -312,6 +313,7 @@
 | PUT | `/v1/parents/{parent_id}/conditions/{date}` | P1 | A-HOME-006 | 하루 한 건 생성/수정 및 이력 |
 | POST | `/v1/parents/{parent_id}/symptoms` | P1 | A-SYM-001 | 증상·시간대·횟수·메모, 행동변화 분류 연결 |
 | GET | `/v1/parents/{parent_id}/symptoms/weekly` | P1 | A-SYM-002 | 최근 4주 증상별 횟수 |
+| PATCH | `/v1/records/{record_id}/symptom` | P1 | A-SYM-001 | 작성자만 시간대·횟수·메모 수정 → 기록 글 다시 만듦 + 수정 이력, `base_version` 필수(설계 추가) |
 | POST | `/v1/parents/{parent_id}/medications/scan` | P1 | A-MED-001 | 약 봉투·처방전 OCR, 사용자 수정 전까지 확정 금지 |
 | GET | `/v1/parents/{parent_id}/medications` | P1 | A-MED-002 | 복용 중/중단 목록 |
 | POST | `/v1/parents/{parent_id}/medications` | P1 | A-MED-002 | 사용자가 확인한 약 추가 |

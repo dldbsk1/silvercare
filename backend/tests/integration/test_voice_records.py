@@ -22,6 +22,7 @@ from tests.integration.conftest import (
     claim_job,
     fail_final,
     join_family,
+    patch_record,
     run_sql,
     sql_scalar,
 )
@@ -349,7 +350,7 @@ def test_silent_recording(client, db, parent_id, fake_storage, monkeypatch):
     assert [tuple(j) for j in job_rows(db, record_id)] == [(TRANSCRIBE, "completed")]
 
     # 사용자가 글 입력 → 버전 2, 원문 '' 보존
-    data = client.patch(f"/v1/records/{record_id}", json={"current_text": "식사 잘 하셨어요"}).json()["data"]
+    data = patch_record(client, f"/v1/records/{record_id}", json={"current_text": "식사 잘 하셨어요"}).json()["data"]
     assert data["original_text"] == "" and data["text_version"] == 2
     assert data["transcript_empty"] is True
 
@@ -473,12 +474,12 @@ def test_edit_before_transcription(client, db, parent_id, fake_storage):
     record_id = new_voice_record(client, fake_storage, parent_id)
 
     for body in ({"current_text": "고침"}, {"source": "call"}, {"item_codes": ["phys_eating"]}):
-        response = client.patch(f"/v1/records/{record_id}", json=body)
+        response = patch_record(client, f"/v1/records/{record_id}", json=body)
         assert response.status_code == 409
         assert response.json()["error"]["code"] == "ALREADY_PROCESSING"
 
     fail_final(db, claim_job(db, record_id, TRANSCRIBE), "STT_FAILED")
-    response = client.patch(f"/v1/records/{record_id}", json={"current_text": "고침"})
+    response = patch_record(client, f"/v1/records/{record_id}", json={"current_text": "고침"})
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "TRANSCRIPTION_FAILED"
 
@@ -488,14 +489,14 @@ def test_edit_after_transcription_and_length(client, db, parent_id, fake_storage
     run_transcribe(db, record_id)
 
     long_text = "가" * 1500
-    data = client.patch(f"/v1/records/{record_id}", json={"current_text": long_text}).json()["data"]
+    data = patch_record(client, f"/v1/records/{record_id}", json={"current_text": long_text}).json()["data"]
     assert data["current_text"] == long_text and data["text_version"] == 2
     assert data["original_text"] == MOCK_TRANSCRIPT
 
-    assert client.patch(f"/v1/records/{record_id}", json={"current_text": "가" * 2001}).status_code == 422
+    assert patch_record(client, f"/v1/records/{record_id}", json={"current_text": "가" * 2001}).status_code == 422
 
     text_record = client.post(f"/v1/parents/{parent_id}/records/text", json={"text": "밥"}).json()["data"]["id"]
-    response = client.patch(f"/v1/records/{text_record}", json={"current_text": "가" * 1001})
+    response = patch_record(client, f"/v1/records/{text_record}", json={"current_text": "가" * 1001})
     assert response.status_code == 422
     assert response.json()["error"]["details"]["max_length"] == 1000
 

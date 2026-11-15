@@ -508,3 +508,59 @@ def test_db_allows_parent_creation_and_deletion(client, db, parent_id):
     run_sql(db, "DELETE FROM parents WHERE id = :p", p=parent_id)
     check_now(db, "parents_has_admin, family_members_last_admin")
     db.commit()
+
+
+def transfer(client, member_id, **body):
+    return client.post(f"/v1/family/{member_id}/admin-transfer", json=body)
+
+
+def roles(client, parent_id):
+    return {m["user_id"]: m["role"] for m in members(client, parent_id)}
+
+
+def test_admin_transfer(client, db, consent_docs, share_doc, admin_id, parent_id):
+    other = join_by_invite(db, client, consent_docs, parent_id, admin_id)
+    client.login(admin_id)
+    my_token = new_token(client, parent_id)
+
+    response = transfer(client, member_id_of(client, parent_id, other))
+    assert response.status_code == 200
+    assert {m["user_id"]: m["role"] for m in response.json()["data"]} == {other: "admin", admin_id: "writer"}
+    # 내가 만든 초대 → 취소
+    assert preview(client, my_token).status_code == 410
+    # 이제 관리자 아님 → 다시 넘기기 403
+    assert transfer(client, member_id_of(client, parent_id, other)).status_code == 403
+
+
+def test_admin_transfer_my_role_viewer(client, db, consent_docs, share_doc, admin_id, parent_id):
+    other = join_by_invite(db, client, consent_docs, parent_id, admin_id, role="viewer")
+    client.login(admin_id)
+
+    transfer(client, member_id_of(client, parent_id, other), my_role="viewer")
+    assert roles(client, parent_id) == {other: "admin", admin_id: "viewer"}
+
+
+def test_admin_transfer_rules(client, db, consent_docs, share_doc, admin_id, parent_id):
+    other = join_by_invite(db, client, consent_docs, parent_id, admin_id)
+    client.login(admin_id)
+    my_member = member_id_of(client, parent_id, admin_id)
+    other_member = member_id_of(client, parent_id, other)
+
+    # 나에게 → 400
+    response = transfer(client, my_member)
+    assert response.status_code == 400 and error_code(response) == "INVALID_TARGET"
+    # 관리자 아닌 역할만
+    assert transfer(client, other_member, my_role="admin").status_code == 422
+    # 관리자 아님 → 403 (그대로)
+    client.login(other)
+    assert transfer(client, my_member).status_code == 403
+    client.login(admin_id)
+    assert roles(client, parent_id) == {admin_id: "admin", other: "writer"}
+
+
+def test_admin_transfer_other_family_404(client, db, consent_docs, admin_id, parent_id):
+    my_member = member_id_of(client, parent_id, admin_id)
+    new_user(db, client, consent_docs)
+    client.post("/v1/parents", json=PARENT)
+
+    assert transfer(client, my_member).status_code == 404

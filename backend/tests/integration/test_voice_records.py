@@ -52,6 +52,10 @@ class FakeStorage:
     def download(self, bucket, path):
         return self.files[path][0] if path in self.files else None
 
+    def list(self, bucket, folder):
+        """폴더 아래 전체 (하위 포함)"""
+        return [p for p in self.files if p.startswith(folder.strip("/") + "/")]
+
     def remove(self, bucket, paths):
         if self.fail_remove:
             raise RuntimeError("Storage down")
@@ -67,6 +71,7 @@ def fake_storage(monkeypatch):
     monkeypatch.setattr(storage, "object_info", fake.info)
     monkeypatch.setattr(storage, "download_object", fake.download)
     monkeypatch.setattr(storage, "remove_objects", fake.remove)
+    monkeypatch.setattr(storage, "list_files", fake.list)
     monkeypatch.setattr(
         storage, "create_signed_download_url",
         lambda bucket, path, expires: f"https://storage.test/play/{path}?e={expires}"

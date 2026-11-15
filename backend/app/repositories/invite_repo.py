@@ -115,3 +115,14 @@ def revoke_created_by(db: Session, parent_id: str, user_id: str) -> int:
         """),
         {"p": parent_id, "u": user_id}
     ).rowcount
+
+
+def revoke_all(db: Session, parent_id: str) -> int:
+    """공간 삭제 요청 → 미사용 초대 전부 취소"""
+    return db.execute(
+        text("""
+            UPDATE family_invites SET revoked_at = now()
+            WHERE parent_id = :p AND accepted_at IS NULL AND revoked_at IS NULL
+        """),
+        {"p": parent_id}
+    ).rowcount

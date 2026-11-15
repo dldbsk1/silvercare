@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # 탈퇴·동의 철회 삭제 실행 (워커). ⚖️ 법률 상담 전 운영 false, 개발 DB에서만 켜서 확인
     DELETION_EXECUTE_ENABLED: bool = False
 
+    # 웹 앱(브라우저) 허용 주소. 쉼표 구분. 비움 + local → localhost·127.0.0.1 모든 포트 허용 (flutter run -d chrome)
+    CORS_ORIGINS: str = ""
+
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
         extra="ignore"

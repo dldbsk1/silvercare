@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request, Response, status
 from app.api.deps import AdminAccess, ConsentedUser, CurrentUser, DbSession, ReadAccess
 from app.schemas.common import DataResponse
 from app.schemas.family import (
+    AdminTransferIn,
     FamilyMemberOut,
     InviteAcceptedOut,
     InviteAcceptIn,
@@ -94,3 +95,10 @@ def remove_member(member_id: UUID, user: ConsentedUser, db: DbSession):
     with db.begin():
         family_service.remove_member(db, user.id, str(member_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/family/{member_id}/admin-transfer", response_model=DataResponse[list[FamilyMemberOut]])
+def transfer_admin(member_id: UUID, body: AdminTransferIn, user: ConsentedUser, db: DbSession):
+    """관리자 넘기기 (관리자만). 상대 → 관리자 + 나 → my_role 을 한 번에. 결과: 가족 전체"""
+    with db.begin():
+        return {"data": family_service.transfer_admin(db, user.id, str(member_id), body)}

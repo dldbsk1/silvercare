@@ -92,3 +92,10 @@ class RoleUpdateIn(BaseModel):
     role: FamilyRole
 
     model_config = {"extra": "forbid"}
+
+
+class AdminTransferIn(BaseModel):
+    # 넘긴 뒤 내 역할 (관리자 X)
+    my_role: InviteRole = "writer"
+
+    model_config = {"extra": "forbid"}

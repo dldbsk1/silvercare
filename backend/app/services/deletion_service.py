@@ -21,7 +21,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db import auth_admin, storage
-from app.repositories import deletion_repo, user_repo
+from app.repositories import deletion_repo, parent_deletion_repo, user_repo
+from app.services import parent_deletion_service
 
 
 logger = logging.getLogger("silvercare.deletion")
@@ -103,6 +104,12 @@ def execute(db: Session, request: dict, paths: list[str]):
     for i in range(0, len(paths), STORAGE_CHUNK):
         storage.remove_objects(settings.STORAGE_AUDIO_BUCKET, paths[i:i + STORAGE_CHUNK])
 
+    # 혼자 쓰던 공간: 폴더 전체 (DB 에 없는 고아 파일 포함)
+    with db.begin():
+        sole = deletion_repo.sole_parent_ids(db, user_id, parents_of(request))
+    for parent_id in sole:
+        parent_deletion_service.remove_space_files(parent_id, [])
+
     if request["request_type"] == ACCOUNT:
         auth_admin.delete_user(user_id)
 
@@ -111,7 +118,9 @@ def execute(db: Session, request: dict, paths: list[str]):
             return
         deletion_repo.delete_records_by(db, user_id)
         if request["request_type"] == ACCOUNT:
-            deletion_repo.delete_sole_parents(db, user_id, parents_of(request))
+            # 그사이 다른 가족 생김 → 남김 (다시 확인)
+            for parent_id in deletion_repo.sole_parent_ids(db, user_id, parents_of(request)):
+                parent_deletion_repo.delete_space(db, parent_id)
             deletion_repo.delete_account_data(db, user_id)
             user_repo.erase_profile(db, user_id)
         deletion_repo.mark_completed(db, str(request["id"]))

@@ -17,7 +17,7 @@ from sqlalchemy import text
 
 from app.ai.provider import check_ai_config
 from app.db.session import new_session
-from app.services import deletion_service, rate_limit, upload_cleanup_service
+from app.services import deletion_service, parent_deletion_service, rate_limit, upload_cleanup_service
 from app.workers.tasks import (
     TASKS,
     Job,
@@ -49,9 +49,17 @@ def claim_job(db) -> Job | None:
                     updated_at = now()
                 WHERE id = (
                     SELECT id FROM jobs
-                    WHERE (status = 'queued' AND run_at <= now())
-                       OR (status = 'running'
-                           AND locked_at < now() - interval '{STALE_MINUTES} minutes')
+                    WHERE ((status = 'queued' AND run_at <= now())
+                           OR (status = 'running'
+                               AND locked_at < now() - interval '{STALE_MINUTES} minutes'))
+                      -- 삭제 예정 공간의 기록 작업 → 대기 (취소되면 이어서, 삭제되면 같이 삭제)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM records r
+                          JOIN parent_deletions d
+                            ON d.target_parent_id = r.parent_id
+                           AND d.status IN ('scheduled', 'executing')
+                          WHERE jobs.target_type = 'record' AND r.id = jobs.target_id
+                      )
                     ORDER BY run_at
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
@@ -227,6 +235,12 @@ def run_cleanup():
             deletion_service.run(db)
     except Exception:
         logger.exception("삭제 요청 처리 실패")
+
+    try:
+        with new_session() as db:
+            parent_deletion_service.run(db)
+    except Exception:
+        logger.exception("공간 삭제 처리 실패")
 
 
 def main():

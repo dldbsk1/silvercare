@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.errors import AppError
 from app.repositories import family_repo, invite_repo, parent_repo
-from app.schemas.family import InviteAcceptIn, InviteCreateIn, RoleUpdateIn
-from app.services import account_service, consent_service
+from app.schemas.family import AdminTransferIn, InviteAcceptIn, InviteCreateIn, RoleUpdateIn
+from app.services import account_service, consent_service, parent_deletion_service
 from app.services.access import ParentAccess, get_parent_access
 
 
@@ -36,12 +36,14 @@ def not_found() -> AppError:
 
 
 def lock_family(db: Session, parent_id: str, user_id: str) -> str:
-    """부모님 행 잠금 → 요청자의 현재 역할. 가족 아님 → 404"""
+    """부모님 행 잠금 → 요청자의 현재 역할. 가족 아님 → 404
+    가족 구성 변경 전용 (초대·역할·내보내기·넘기기). 공간 삭제 요청 중 → 409"""
     if not family_repo.lock_parent(db, parent_id):
         raise not_found()
     role = family_repo.get_role(db, parent_id, user_id)
     if role is None:
         raise not_found()
+    parent_deletion_service.ensure_family_changeable(db, parent_id)
     return role
 
 
@@ -191,6 +193,7 @@ def accept(db: Session, user_id: str, body: InviteAcceptIn) -> dict:
     parent_id = str(invite["parent_id"])
     if not family_repo.lock_parent(db, parent_id):
         raise invite_not_found()
+    parent_deletion_service.ensure_family_changeable(db, parent_id)
     invite = invite_repo.get_by_hash(db, token_hash, for_update=True)
     my_role = family_repo.get_role(db, parent_id, user_id)
 
@@ -283,3 +286,23 @@ def remove_member(db: Session, user_id: str, member_id: str):
 
     invite_repo.revoke_created_by(db, parent_id, str(member["user_id"]))
     family_repo.delete_member(db, member_id)
+
+
+def transfer_admin(db: Session, user_id: str, member_id: str, body: AdminTransferIn) -> list[dict]:
+    """관리자 넘기기 (한 트랜잭션): 상대 → 관리자, 나 → body.my_role. 내 초대 링크 취소
+    상대가 이미 관리자 → 나만 내려감 (관리자 1명 이상 유지)"""
+    member = find_member(db, user_id, member_id)
+    parent_id = str(member["parent_id"])
+    lock_family_as_admin(db, parent_id, user_id)
+    member = lock_member(db, member_id)
+
+    if str(member["user_id"]) == user_id:
+        raise AppError(400, "INVALID_TARGET", "다른 가족을 골라 주세요.")
+
+    mine = family_repo.get_membership(db, parent_id, user_id)
+    if member["role"] != "admin":
+        family_repo.set_role(db, member_id, "admin")
+    family_repo.set_role(db, str(mine["id"]), body.my_role)
+    invite_repo.revoke_created_by(db, parent_id, user_id)
+
+    return [to_member_out(m, user_id) for m in family_repo.list_members(db, parent_id)]

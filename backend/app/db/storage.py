@@ -120,3 +120,30 @@ def remove_objects(bucket: str, paths: list[str]):
     """없는 파일 삭제 → 오류 아님 (재실행 안전)"""
     with storage_call("remove"):
         get_admin_client().storage.from_(bucket).remove(paths)
+
+
+LIST_PAGE_SIZE = 1000
+
+
+def list_files(bucket: str, folder: str) -> list[str]:
+    """폴더 아래 모든 파일 경로 (하위 폴더 포함). 고아 파일 정리용
+    Storage 목록: 한 단계씩, 폴더는 id 없음 → 재귀"""
+    paths: list[str] = []
+    pending = [folder.strip("/")]
+    with storage_call("list"):
+        files = get_admin_client().storage.from_(bucket)
+        while pending:
+            current = pending.pop()
+            offset = 0
+            while True:
+                items = files.list(current, {"limit": LIST_PAGE_SIZE, "offset": offset})
+                for item in items:
+                    path = f"{current}/{item['name']}"
+                    if item.get("id") is None:
+                        pending.append(path)
+                    else:
+                        paths.append(path)
+                if len(items) < LIST_PAGE_SIZE:
+                    break
+                offset += LIST_PAGE_SIZE
+    return paths

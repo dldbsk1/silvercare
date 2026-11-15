@@ -125,24 +125,25 @@ def audio_paths(db: Session, user_id: str, parent_ids: list[str]) -> list[str]:
 
 
 def delete_records_by(db: Session, user_id: str) -> int:
-    """내가 쓴 기록 (분류·수정 이력·댓글·증상 연쇄 삭제). 업로드 행 먼저 (참조 연쇄 없음)"""
+    """내가 쓴 기록 (분류·수정 이력·댓글·증상 연쇄 삭제)
+    연쇄로 안 지워지는 것 먼저: AI 작업 (FK X) · 보고서 근거 (RESTRICT) · 업로드 행 (연쇄 X)"""
+    mine = "SELECT id FROM records WHERE author_id = :u"
     db.execute(
-        text("""
-            DELETE FROM audio_uploads
-            WHERE record_id IN (SELECT id FROM records WHERE author_id = :u)
-        """),
+        text(f"DELETE FROM jobs WHERE target_type = 'record' AND target_id IN ({mine})"),
         {"u": user_id}
     )
+    db.execute(text(f"DELETE FROM report_item_sources WHERE record_id IN ({mine})"), {"u": user_id})
+    db.execute(text(f"DELETE FROM audio_uploads WHERE record_id IN ({mine})"), {"u": user_id})
     return db.execute(
         text("DELETE FROM records WHERE author_id = :u"), {"u": user_id}
     ).rowcount
 
 
-def delete_sole_parents(db: Session, user_id: str, parent_ids: list[str]) -> int:
-    """혼자 쓰던 부모님 공간 삭제 (연쇄). 그사이 다른 가족 생김 → 남김"""
-    return db.execute(
+def sole_parent_ids(db: Session, user_id: str, parent_ids: list[str]) -> list[str]:
+    """혼자 쓰는 부모님 공간 (다른 가족 없음). 삭제는 parent_deletion_repo.delete_space"""
+    return [str(p) for p in db.execute(
         text("""
-            DELETE FROM parents p
+            SELECT p.id FROM parents p
             WHERE p.id = ANY(CAST(:p AS uuid[]))
               AND NOT EXISTS (
                   SELECT 1 FROM family_members fm
@@ -150,7 +151,7 @@ def delete_sole_parents(db: Session, user_id: str, parent_ids: list[str]) -> int
               )
         """),
         {"u": user_id, "p": parent_ids}
-    ).rowcount
+    ).scalars()]
 
 
 def delete_account_data(db: Session, user_id: str):

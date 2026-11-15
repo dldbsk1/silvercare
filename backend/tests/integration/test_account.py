@@ -320,6 +320,7 @@ def executor(monkeypatch):
     monkeypatch.setattr(storage, "create_signed_upload_url", fake.sign_upload)
     monkeypatch.setattr(storage, "object_info", fake.info)
     monkeypatch.setattr(storage, "remove_objects", fake.remove)
+    monkeypatch.setattr(storage, "list_files", fake.list)
     monkeypatch.setattr(auth_admin, "delete_user", deleted_auth.append)
     monkeypatch.setattr(settings, "DELETION_EXECUTE_ENABLED", True)
     fake.deleted_auth = deleted_auth

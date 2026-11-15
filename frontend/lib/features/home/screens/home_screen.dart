@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import '../../../app/theme.dart';
 import '../../../core/api/api_exception.dart';
 import '../../../core/auth/auth_api.dart';
+import '../../records/record_api.dart';
+import '../../records/screens/record_detail_screen.dart';
 import '../../records/widgets/record_card.dart';
 import '../home_api.dart';
 import '../voice_recorder.dart';
@@ -25,12 +27,13 @@ import '../voice_recorder.dart';
 /// 처리 대기: 2초마다 확인, 60초 넘으면 중단 + 기록함 안내
 /// TODO(B단계): 오늘 컨디션, 받은 체크리스트, 알림 개수
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, this.homeApi, this.authApi, this.recorder});
+  const HomeScreen({super.key, this.homeApi, this.authApi, this.recorder, this.recordApi});
 
   /// 테스트용 교체
   final HomeApi? homeApi;
   final AuthApi? authApi;
   final VoiceRecorder? recorder;
+  final RecordApi? recordApi;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -70,6 +73,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _savingMessage = '';
   String? _resultTitle;
   String? _resultText;
+  String? _resultRecordId;
   bool _resultPending = false;
 
   @override
@@ -116,6 +120,14 @@ class _HomeScreenState extends State<HomeScreen> {
     } on ApiException {
       // 다음 새로고침 때
     }
+  }
+
+  /// 저장 결과 → 상세 열고 분류 바꾸기 / 글 고치기 바로
+  void _openResult(RecordAction action) {
+    final id = _resultRecordId;
+    if (id == null) return;
+    setState(() => _mode = _Mode.idle);
+    openRecordDetail(context, id, action: action, recordApi: widget.recordApi);
   }
 
   void _toast(String message) {
@@ -287,6 +299,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _mode = _Mode.result;
       _resultTitle = title;
       _resultText = text;
+      _resultRecordId = recordId;
       _resultPending = pending;
     });
     recordsChanged.value++;
@@ -330,7 +343,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       )
                     else
                       for (final record in home.recentRecords) ...[
-                        RecordCard(record: record),
+                        RecordCard(
+                          record: record,
+                          onTap: () => openRecordDetail(context, record.id, recordApi: widget.recordApi),
+                        ),
                         const SizedBox(height: 12),
                       ],
                   ],
@@ -461,8 +477,8 @@ class _HomeScreenState extends State<HomeScreen> {
             title: _resultTitle ?? '',
             text: _resultText,
             pending: _resultPending,
-            onChangeClass: () => _toast('분류 바꾸기는 기록 상세에서 할 수 있어요. (준비 중)'),
-            onEditText: () => _toast('글 고치기는 기록 상세에서 할 수 있어요. (준비 중)'),
+            onChangeClass: () => _openResult(RecordAction.classify),
+            onEditText: () => _openResult(RecordAction.edit),
             onClose: () => setState(() => _mode = _Mode.idle),
           ),
         ];

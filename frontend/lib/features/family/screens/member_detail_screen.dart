@@ -5,6 +5,7 @@ import '../../../app/theme.dart';
 import '../../../core/api/api_exception.dart';
 import '../../home/home_api.dart';
 import '../../records/records_api.dart';
+import '../../records/screens/record_detail_screen.dart';
 import '../../records/widgets/record_card.dart';
 import '../family_api.dart';
 import '../widgets/family_widgets.dart';
@@ -348,7 +349,10 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
       ];
     }
     return [
-      for (final r in _recent) ...[RecordCard(record: r), const SizedBox(height: 8)],
+      for (final r in _recent) ...[
+        RecordCard(record: r, onTap: () => openRecordDetail(context, r.id)),
+        const SizedBox(height: 8),
+      ],
     ];
   }
 

@@ -18,7 +18,7 @@ void main() {
       '구글로 시작하기',
       '네이버로 시작하기',
       '휴대폰 번호로 시작하기',
-      '이메일로 시작하기 (개발용)',
+      '이메일로 시작하기',
     ]) {
       expect(find.text(label), findsOneWidget);
     }
@@ -43,7 +43,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    await tester.tap(find.text('이메일로 시작하기 (개발용)'));
+    await tester.tap(find.text('이메일로 시작하기'));
     await tester.pumpAndSettle();
     expect(find.text('이메일로\n로그인해주세요'), findsOneWidget);
   });

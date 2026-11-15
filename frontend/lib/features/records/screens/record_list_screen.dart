@@ -5,8 +5,10 @@ import '../../../app/theme.dart';
 import '../../../core/api/api_exception.dart';
 import '../../../core/auth/auth_api.dart';
 import '../../home/home_api.dart';
+import '../record_api.dart';
 import '../records_api.dart';
 import '../widgets/record_card.dart';
+import 'record_detail_screen.dart';
 import 'symptom_screen.dart';
 
 /// SCR_A_200 기록함
@@ -14,11 +16,14 @@ import 'symptom_screen.dart';
 /// - 필터: 영역 · 가족(작성자) · 기간 → 바텀시트 (모두 AND)
 /// - 빈 화면 2종: 기록 자체 없음 / 조건에 맞는 기록 없음
 class RecordListScreen extends StatefulWidget {
-  const RecordListScreen({super.key, this.recordsApi, this.authApi});
+  const RecordListScreen({super.key, this.recordsApi, this.authApi, this.recordApi});
 
   /// 테스트용 교체
   final RecordsApi? recordsApi;
   final AuthApi? authApi;
+
+  /// 기록 상세 (테스트용 교체)
+  final RecordApi? recordApi;
 
   @override
   State<RecordListScreen> createState() => _RecordListScreenState();
@@ -343,7 +348,7 @@ class _RecordListScreenState extends State<RecordListScreen> {
       widgets.add(RecordCard(
         record: record,
         showDay: false,
-        onTap: () => _toast('기록 상세는 준비 중이에요.'),
+        onTap: () => openRecordDetail(context, record.id, recordApi: widget.recordApi),
       ));
     }
     if (_loadingMore) {

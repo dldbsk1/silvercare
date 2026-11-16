@@ -137,11 +137,16 @@ class Invite {
   }
 }
 
-/// 새 초대 (링크는 이 응답에서만 받을 수 있음)
+/// 새 초대 (코드·링크는 이 응답에서만 받을 수 있음)
 class CreatedInvite {
-  CreatedInvite({required this.id, required this.url});
+  CreatedInvite({required this.id, required this.code, required this.url});
 
   final String id;
+
+  /// 초대 코드 (= 링크 #t= 뒤 토큰). 베타: 링크 대신 코드만 공유
+  final String code;
+
+  /// 앱 링크 도메인 정한 뒤 공유용 (지금 INVITE_BASE_URL 임시 주소)
   final String url;
 }
 
@@ -182,13 +187,17 @@ class FamilyApi {
     return data.map((e) => Invite.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  /// 초대 링크 (7일, 1회). share_confirmed: 부모님 가족 공유 동의 확인
+  /// 초대 (7일, 1회). share_confirmed: 부모님 가족 공유 동의 확인
   Future<CreatedInvite> createInvite(String parentId, {String role = 'writer'}) async {
     final data = await _api.post(
       '/parents/$parentId/invites',
       body: {'role': role, 'share_confirmed': true},
     ) as Map<String, dynamic>;
-    return CreatedInvite(id: data['invite_id'] as String, url: data['invite_url'] as String);
+    return CreatedInvite(
+      id: data['invite_id'] as String,
+      code: data['token'] as String,
+      url: data['invite_url'] as String,
+    );
   }
 
   Future<void> revokeInvite(String inviteId) => _api.delete('/invites/$inviteId');
@@ -197,7 +206,7 @@ class FamilyApi {
     await _api.patch('/family/$memberId/role', body: {'role': role});
   }
 
-  /// 관리자 넘기기 (서버 한 트랜잭션): 상대 → 관리자, 나 → myRole. 내 초대 링크 취소
+  /// 관리자 넘기기 (서버 한 트랜잭션): 상대 → 관리자, 나 → myRole. 내 초대 코드 취소
   Future<List<FamilyMember>> transferAdmin(String toMemberId, {String myRole = 'writer'}) async {
     final data = await _api.post('/family/$toMemberId/admin-transfer', body: {'my_role': myRole}) as List;
     return data.map((e) => FamilyMember.fromJson(e as Map<String, dynamic>)).toList();

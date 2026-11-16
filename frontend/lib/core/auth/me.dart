@@ -5,6 +5,7 @@ class Me {
     this.displayName,
     this.loginType,
     required this.withdrawn,
+    this.deletionScheduledFor,
     required this.consentsCompleted,
     required this.nameSet,
     required this.parentRegistered,
@@ -19,6 +20,9 @@ class Me {
       displayName: json['user']['display_name'] as String?,
       loginType: json['user']['login_type'] as String?,
       withdrawn: account['status'] == 'withdrawn',
+      deletionScheduledFor: account['deletion_scheduled_for'] == null
+          ? null
+          : DateTime.parse(account['deletion_scheduled_for'] as String).toLocal(),
       consentsCompleted: onboarding['consents_completed'] as bool,
       nameSet: onboarding['name_set'] as bool,
       parentRegistered: onboarding['parent_registered'] as bool,
@@ -34,13 +38,16 @@ class Me {
   /// 로그인 방식 (kakao · naver · google · phone · email). 모름 → null
   final String? loginType;
   final bool withdrawn;
+
+  /// 탈퇴 → 기록·계정 삭제 예정 시각. 탈퇴 X → null
+  final DateTime? deletionScheduledFor;
   final bool consentsCompleted;
   final bool nameSet;
   final bool parentRegistered;
   final List<String> parentIds;
 
   /// 다음 화면: 탈퇴 → 동의 → 이름 + 부모님 등록 (한 화면) → 홈
-  /// TODO(초대): 초대 토큰 보관 중이면 부모님 등록 대신 이름 + 초대 수락 화면
+  /// 초대받은 사람: 첫 설정 화면 → 초대 코드 붙여넣기 (/onboarding/invite) → 수락 뒤 parentRegistered
   String get nextRoute {
     if (withdrawn) return '/withdrawn';
     if (!consentsCompleted) return '/onboarding/consents';

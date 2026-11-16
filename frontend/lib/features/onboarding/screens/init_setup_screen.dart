@@ -14,6 +14,7 @@ import '../setup_api.dart';
 /// - 이름: 이미 정했으면 미리 채움, 바뀐 경우만 저장
 /// - 필수: 이름 · 호칭 · 신청 단계 · 함께 사는지 / 선택: 나이대 (다시 누르면 해제)
 /// - 부모님 등록 재시도 → 같은 Idempotency-Key (두 번 생기지 않게)
+/// - 가족에게 초대받음 → [초대 코드 입력] → 초대 수락 화면 (부모님 등록 X)
 class InitSetupScreen extends StatefulWidget {
   const InitSetupScreen({super.key, this.setupApi, this.authApi});
 
@@ -157,6 +158,8 @@ class _InitSetupScreenState extends State<InitSetupScreen> {
                         color: AppColors.text,
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    _InviteEntry(onTap: () => context.push('/onboarding/invite')),
                     const _SectionLabel('내 이름', help: '가족에게 이렇게 보여요'),
                     _TextInput(controller: _nameController, hint: '예: 홍길동'),
                     const _SectionLabel('호칭'),
@@ -214,6 +217,42 @@ class _InitSetupScreenState extends State<InitSetupScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 초대받은 사람 입구 (부모님 등록 대신 초대 수락)
+class _InviteEntry extends StatelessWidget {
+  const _InviteEntry({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.mint,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(Icons.mail_outline, color: AppColors.primary),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text('가족에게 초대받았나요?', style: TextStyle(fontSize: 15, color: AppColors.text)),
+              ),
+              Text(
+                '초대 코드 입력',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.primary),
+              ),
+              Icon(Icons.chevron_right, color: AppColors.primary),
+            ],
+          ),
         ),
       ),
     );

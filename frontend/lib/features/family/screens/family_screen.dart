@@ -12,7 +12,7 @@ import '../widgets/family_widgets.dart';
 import '../widgets/parent_edit_sheet.dart';
 import 'member_detail_screen.dart';
 
-/// 초대 링크 공유 (테스트용 교체). 기본: 휴대폰 공유창 (카카오톡 선택)
+/// 초대 코드 공유 (테스트용 교체). 기본: 휴대폰 공유창 (카카오톡 선택)
 typedef ShareInvite = Future<void> Function(String text);
 
 Future<void> _systemShare(String text) =>
@@ -152,21 +152,24 @@ class _FamilyScreenState extends State<FamilyScreen> {
       context,
       (_) => _InviteSheet(
         create: () => _api.createInvite(_parentId!),
-        share: (url) => _share(_inviteText(url)),
+        share: (code) => _share(_inviteText(code)),
       ),
     );
     _load();
   }
 
-  String _inviteText(String url) =>
-      '${_parent?.nickname ?? '부모님'} 기록을 함께 남겨요. DAMA 초대 링크 (7일)\n$url';
+  /// 베타: 링크 대신 초대 코드 (앱 링크 도메인 정하기 전, 임시 주소 노출 X)
+  /// 받은 사람: 앱 첫 설정 [초대 코드 입력]에 메시지 통째 또는 코드만 붙여넣기
+  String _inviteText(String code) =>
+      '${_parent?.nickname ?? '부모님'} 기록을 함께 남겨요. DAMA 초대 코드 (7일)\n$code\n'
+      'DAMA 앱 첫 화면 [초대 코드 입력]에 이 메시지를 붙여넣어 주세요.';
 
-  /// 링크 원문은 다시 못 받음 → 이전 초대 취소 + 같은 권한으로 새 초대 → 공유
+  /// 코드 원문은 다시 못 받음 → 이전 초대 취소 + 같은 권한으로 새 초대 → 공유
   Future<void> _resend(Invite invite) async {
     try {
       final created = await _api.createInvite(_parentId!, role: invite.role);
       await _api.revokeInvite(invite.id);
-      await _share(_inviteText(created.url));
+      await _share(_inviteText(created.code));
     } on ApiException catch (e) {
       if (mounted) _toast(e.message);
     }
@@ -596,13 +599,13 @@ class _InviteCard extends StatelessWidget {
   }
 }
 
-/// 가족 초대하기 시트 (Figma: 카톡으로 초대 / 링크 복사)
-/// 초대 링크 = 부모님 건강 기록 공유 → 부모님(대리인) 동의 확인 체크 필요 (서버 share_confirmed)
+/// 가족 초대하기 시트 (Figma: 카톡으로 초대 / 링크 복사 → 베타: 코드)
+/// 초대 = 부모님 건강 기록 공유 → 부모님(대리인) 동의 확인 체크 필요 (서버 share_confirmed)
 class _InviteSheet extends StatefulWidget {
   const _InviteSheet({required this.create, required this.share});
 
   final Future<CreatedInvite> Function() create;
-  final Future<void> Function(String url) share;
+  final Future<void> Function(String code) share;
 
   @override
   State<_InviteSheet> createState() => _InviteSheetState();
@@ -612,14 +615,14 @@ class _InviteSheetState extends State<_InviteSheet> {
   bool _confirmed = false;
   bool _busy = false;
 
-  /// 시트 안에서 한 번만 생성 (공유 + 복사 → 같은 링크)
+  /// 시트 안에서 한 번만 생성 (공유 + 복사 → 같은 코드)
   CreatedInvite? _invite;
 
-  Future<String?> _url() async {
-    if (_invite != null) return _invite!.url;
+  Future<String?> _code() async {
+    if (_invite != null) return _invite!.code;
     try {
       _invite = await widget.create();
-      return _invite!.url;
+      return _invite!.code;
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -629,18 +632,18 @@ class _InviteSheetState extends State<_InviteSheet> {
     }
   }
 
-  Future<void> _run(Future<void> Function(String url) action) async {
+  Future<void> _run(Future<void> Function(String code) action) async {
     setState(() => _busy = true);
-    final url = await _url();
-    if (url != null) await action(url);
+    final code = await _code();
+    if (code != null) await action(code);
     if (mounted) setState(() => _busy = false);
   }
 
-  Future<void> _copy(String url) async {
-    await Clipboard.setData(ClipboardData(text: url));
+  Future<void> _copy(String code) async {
+    await Clipboard.setData(ClipboardData(text: code));
     if (!mounted) return;
     ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('초대 링크를 복사했어요.')));
+        .showSnackBar(const SnackBar(content: Text('초대 코드를 복사했어요.')));
   }
 
   @override
@@ -651,7 +654,7 @@ class _InviteSheetState extends State<_InviteSheet> {
       children: [
         const SizedBox(height: 4),
         const Text(
-          '초대 링크는 7일 동안 쓸 수 있어요',
+          '초대 코드는 7일 동안 한 번 쓸 수 있어요',
           style: TextStyle(fontSize: 16, color: AppColors.subtext),
         ),
         const SizedBox(height: 12),
@@ -680,7 +683,7 @@ class _InviteSheetState extends State<_InviteSheet> {
               fontWeight: FontWeight.w700,
             ),
           ),
-          child: const Text('초대 링크 공유'),
+          child: const Text('초대 코드 공유'),
         ),
         const SizedBox(height: 12),
         OutlinedButton(
@@ -697,7 +700,7 @@ class _InviteSheetState extends State<_InviteSheet> {
               fontWeight: FontWeight.w700,
             ),
           ),
-          child: const Text('링크 복사'),
+          child: const Text('코드 복사'),
         ),
         const SizedBox(height: 16),
         const Text(

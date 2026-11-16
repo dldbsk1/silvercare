@@ -5,11 +5,13 @@ import '../features/home/screens/home_screen.dart';
 import '../features/onboarding/screens/consent_screen.dart';
 import '../features/onboarding/screens/email_login_screen.dart';
 import '../features/onboarding/screens/init_setup_screen.dart';
+import '../features/onboarding/screens/invite_join_screen.dart';
 import '../features/onboarding/screens/login_screen.dart';
 import '../features/onboarding/screens/phone_screen.dart';
 import '../features/onboarding/screens/start_screen.dart';
 import '../features/records/screens/record_list_screen.dart';
 import '../features/settings/screens/my_info_screen.dart';
+import '../features/settings/screens/withdrawn_screen.dart';
 import '../shared/widgets/placeholder_screen.dart';
 import 'main_shell.dart';
 
@@ -50,8 +52,12 @@ GoRouter createAppRouter() => GoRouter(
       builder: (context, state) => const InitSetupScreen(),
     ),
     GoRoute(
+      path: '/onboarding/invite', // 초대 수락 (A-FAM-001)
+      builder: (context, state) => const InviteJoinScreen(),
+    ),
+    GoRoute(
       path: '/withdrawn',
-      builder: (context, state) => const PlaceholderScreen(title: '탈퇴 처리 중'),
+      builder: (context, state) => const WithdrawnScreen(),
     ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, shell) => MainShell(shell: shell),

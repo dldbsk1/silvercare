@@ -10,6 +10,7 @@ import '../../family/widgets/family_widgets.dart';
 import '../../family/widgets/parent_edit_sheet.dart';
 import '../../onboarding/consent_api.dart';
 import '../settings_api.dart';
+import '../widgets/data_choice_dialog.dart';
 
 /// SCR_A_500 내 정보
 /// - 로그인 방식 · 부모님 카드 (관리자: 수정) · PC에서 열기
@@ -132,18 +133,29 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
 
   Future<void> _revoke(String type) async {
     final required = requiredConsents.contains(type);
-    final due = DateTime.now().add(const Duration(days: 7));
-    final yes = await showConfirmDialog(
-      context,
-      title: required ? '${_shortLabel(type)} 동의를\n철회할까요?' : '알림 수신 동의를\n철회할까요?',
-      body: required
-          ? '필수 동의를 철회하면 기록 기능이 멈추고, 7일 뒤(${_date(due)})에 데이터가 삭제돼요.'
-          : '철회하면 알림을 받지 않아요. 언제든 다시 동의할 수 있어요.',
-      action: '철회하기',
-    );
-    if (!yes) return;
+    var deleteMyRecords = false;
+    if (required) {
+      final due = DateTime.now().add(const Duration(days: 7));
+      final choice = await showDataChoiceDialog(
+        context,
+        title: '${_shortLabel(type)} 동의를\n철회할까요?',
+        notes: revokeNotes,
+        deleteHelp: '7일 뒤(${_date(due)}) 삭제돼요. 그 전에 다시 동의하면 취소돼요.',
+        action: '철회하기',
+      );
+      if (choice == null) return;
+      deleteMyRecords = choice;
+    } else {
+      final yes = await showConfirmDialog(
+        context,
+        title: '알림 수신 동의를\n철회할까요?',
+        body: '철회하면 알림을 받지 않아요. 언제든 다시 동의할 수 있어요.',
+        action: '철회하기',
+      );
+      if (!yes) return;
+    }
     final ok = await _run(() async {
-      final consents = await _api.revokeConsent(type);
+      final consents = await _api.revokeConsent(type, deleteMyRecords: deleteMyRecords);
       if (mounted) setState(() => _consents = consents);
     });
     if (!ok || !mounted) return;
@@ -230,16 +242,8 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
     if (mounted) context.go('/');
   }
 
+  /// 확인 (관리자 넘기기 필요 → 가족 탭 / 혼자 쓰는 공간 → 삭제 확인) → 데이터 처리 안내 + 기록 지우기 선택 → 탈퇴
   Future<void> _withdraw() async {
-    final yes = await showConfirmDialog(
-      context,
-      title: '정말 탈퇴할까요?',
-      body: '내 기록이 모두 삭제돼요. 내가 관리자라면 다른 구성원에게 관리자를 먼저 넘겨 주세요.',
-      action: '탈퇴하기',
-      destructive: true,
-    );
-    if (!yes) return;
-
     List<WithdrawalParent>? parents;
     final checked = await _run(() async => parents = await _api.withdrawalCheck());
     if (!checked || !mounted) return;
@@ -262,14 +266,25 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
       final yes = await showConfirmDialog(
         context,
         title: '기록 공간도 함께 삭제돼요',
-        body: '${sole.map((p) => p.nickname).join(', ')} 기록 공간을 나 혼자 쓰고 있어요. 탈퇴하면 이 공간의 모든 기록도 함께 삭제돼요.',
-        action: '탈퇴하기',
+        body: '${sole.map((p) => p.nickname).join(', ')} 기록 공간을 나 혼자 쓰고 있어요. 탈퇴하면 7일 뒤 이 공간의 모든 기록도 함께 삭제돼요.',
+        action: '계속',
         destructive: true,
       );
-      if (!yes) return;
+      if (!yes || !mounted) return;
     }
 
-    final ok = await _run(() => _api.withdraw(deleteSoleParents: sole.isNotEmpty));
+    final deleteMyRecords = await showDataChoiceDialog(
+      context,
+      title: '정말 탈퇴할까요?',
+      notes: withdrawalNotes,
+      deleteHelp: '가족 공간에서도 사라지고, 되돌릴 수 없어요.',
+      action: '탈퇴하기',
+    );
+    if (deleteMyRecords == null) return;
+
+    final ok = await _run(
+      () => _api.withdraw(deleteSoleParents: sole.isNotEmpty, deleteMyRecords: deleteMyRecords),
+    );
     if (ok && mounted) context.go('/withdrawn');
   }
 

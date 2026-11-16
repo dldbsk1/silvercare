@@ -105,9 +105,15 @@ class FakeSettingsApi extends SettingsApi {
   Future<List<WithdrawalParent>> withdrawalCheck() async => withdrawalParents;
 
   @override
-  Future<DateTime> withdraw({required bool deleteSoleParents}) async {
-    calls.add('withdraw:$deleteSoleParents');
+  Future<DateTime> withdraw({required bool deleteSoleParents, bool deleteMyRecords = false}) async {
+    calls.add('withdraw:sole=$deleteSoleParents,records=$deleteMyRecords');
     return DateTime(2026, 11, 21);
+  }
+
+  @override
+  Future<MyConsents> revokeConsent(String type, {bool deleteMyRecords = false}) async {
+    calls.add('revoke:$type,records=$deleteMyRecords');
+    return fetchConsents();
   }
 }
 
@@ -224,8 +230,6 @@ void main() {
 
     await tester.tap(find.text('탈퇴'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('탈퇴하기'));
-    await tester.pumpAndSettle();
     expect(find.text('관리자를 먼저 넘겨 주세요'), findsOneWidget);
 
     await tester.tap(find.text('가족 탭으로'));
@@ -244,14 +248,71 @@ void main() {
 
     await tester.tap(find.text('탈퇴'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('탈퇴하기'));
-    await tester.pumpAndSettle();
     expect(find.text('기록 공간도 함께 삭제돼요'), findsOneWidget);
+    await tester.tap(find.text('계속'));
+    await tester.pumpAndSettle();
+
+    // 데이터 처리 안내 → 기본: 기록 유지
+    expect(find.text('정말 탈퇴할까요?'), findsOneWidget);
+    expect(find.textContaining('\'탈퇴한 사용자\''), findsOneWidget);
     await tester.tap(find.text('탈퇴하기'));
     await tester.pumpAndSettle();
 
-    expect(api.calls, ['withdraw:true']);
+    expect(api.calls, ['withdraw:sole=true,records=false']);
     expect(find.text('이동 /withdrawn'), findsOneWidget);
+  });
+
+  testWidgets('탈퇴: 내가 쓴 기록도 모두 지우기 선택', (tester) async {
+    tallScreen(tester);
+    final api = FakeSettingsApi(withdrawalParents: [
+      WithdrawalParent(parentId: 'p1', nickname: '엄마', status: 'ok'),
+    ]);
+    await tester.pumpWidget(app(api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('탈퇴'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('내가 쓴 기록도 모두 지우기'));
+    await tester.pump();
+    await tester.tap(find.text('탈퇴하기'));
+    await tester.pumpAndSettle();
+
+    expect(api.calls, ['withdraw:sole=false,records=true']);
+  });
+
+  testWidgets('탈퇴: 안내에서 취소 → 탈퇴 X', (tester) async {
+    tallScreen(tester);
+    final api = FakeSettingsApi();
+    await tester.pumpWidget(app(api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('탈퇴'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('취소'));
+    await tester.pumpAndSettle();
+
+    expect(api.calls, isEmpty);
+    expect(find.text('이동 /withdrawn'), findsNothing);
+  });
+
+  testWidgets('필수 동의 철회: 기본 기록 유지 / 지우기 선택', (tester) async {
+    tallScreen(tester);
+    final api = FakeSettingsApi();
+    await tester.pumpWidget(app(api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('철회').first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('동의를\n철회할까요?'), findsOneWidget);
+    expect(find.textContaining('다시 동의하면 취소돼요'), findsOneWidget);
+    await tester.tap(find.text('내가 쓴 기록도 모두 지우기'));
+    await tester.pump();
+    await tester.tap(find.text('철회하기'));
+    await tester.pumpAndSettle();
+
+    expect(api.calls, ['revoke:service,records=true']);
+    // 필수 동의 없음 → 처음 화면 (동의부터)
+    expect(find.text('이동 /'), findsOneWidget);
   });
 
   testWidgets('로그아웃 → 처음 화면', (tester) async {

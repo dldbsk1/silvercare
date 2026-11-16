@@ -87,7 +87,8 @@ class FakeFamilyApi extends FamilyApi {
     created++;
     return CreatedInvite(
       id: 'new$created',
-      url: 'https://dama.test/invite#t=abc$created',
+      code: 'code$created',
+      url: 'https://dama.test/invite#t=code$created',
     );
   }
 
@@ -291,7 +292,7 @@ void main() {
 
     await tester.tap(find.text('가족 초대하기'));
     await tester.pumpAndSettle();
-    final kakao = find.widgetWithText(FilledButton, '초대 링크 공유');
+    final kakao = find.widgetWithText(FilledButton, '초대 코드 공유');
     expect(tester.widget<FilledButton>(kakao).onPressed, isNull);
 
     await tester.tap(find.byType(Checkbox));
@@ -300,7 +301,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(api.created, 1);
-    expect(shared.single, contains('https://dama.test/invite#t=abc1'));
+    // 베타: 코드만 (임시 링크 주소 X)
+    expect(shared.single, contains('code1'));
+    expect(shared.single, isNot(contains('https://')));
   });
 
   testWidgets('다시 보내기 → 새 초대 + 이전 초대 취소', (tester) async {

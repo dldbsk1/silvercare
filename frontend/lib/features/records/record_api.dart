@@ -78,6 +78,7 @@ class RecordDetail {
     required this.occurredAt,
     required this.editVersion,
     this.audioSeconds,
+    this.audioAvailable = true,
     this.symptom,
   });
 
@@ -101,6 +102,7 @@ class RecordDetail {
         occurredAt: json['occurred_at'] == null ? null : DateTime.parse(json['occurred_at'] as String).toLocal(),
         editVersion: json['edit_version'] as int? ?? 0,
         audioSeconds: json['audio_duration_seconds'] as int?,
+        audioAvailable: json['audio_available'] as bool? ?? true,
         symptom: json['symptom'] == null ? null : RecordSymptom.fromJson(json['symptom'] as Map<String, dynamic>),
       );
 
@@ -135,6 +137,9 @@ class RecordDetail {
   /// 사용자 수정 순번 (실제 변경마다 +1). PATCH base_version
   final int editVersion;
   final int? audioSeconds;
+
+  /// 재생 가능. 음성 기록인데 false → 작성자 탈퇴로 음성 삭제 (글은 유지)
+  final bool audioAvailable;
   final RecordSymptom? symptom;
 
   bool get processing => processingStatus == 'pending' || processingStatus == 'processing';

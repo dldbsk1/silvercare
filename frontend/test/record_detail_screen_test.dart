@@ -482,4 +482,13 @@ void main() {
     expect(player.played, isTrue);
     expect(find.byTooltip('멈추기'), findsOneWidget);
   });
+
+  testWidgets('작성자 탈퇴로 음성 삭제 → 재생 막대 대신 안내', (tester) async {
+    final api = FakeRecordApi({...rec(mine: false), 'author_name': '탈퇴한 사용자', 'audio_available': false});
+    await open(tester, api);
+
+    expect(find.byTooltip('재생'), findsNothing);
+    expect(find.text('작성자가 탈퇴해 음성 파일은 삭제됐어요.'), findsOneWidget);
+    expect(find.textContaining('탈퇴한 사용자'), findsWidgets);
+  });
 }

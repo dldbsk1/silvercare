@@ -18,6 +18,10 @@ class Env {
 
   static const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
 
+  /// 소셜 로그인 뒤 앱 복귀 주소 (딥링크). 패키지 이름 = 스킴
+  /// AndroidManifest · iOS Info.plist · Supabase Redirect URLs 모두 같은 값
+  static const authRedirect = 'com.silvercare.silvercare://login-callback';
+
   /// publishable key만 (secret key 앱에 넣기 X)
   static const supabasePublishableKey =
       String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');

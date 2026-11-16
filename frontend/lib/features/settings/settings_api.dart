@@ -149,20 +149,25 @@ class SettingsApi {
   Future<MyConsents> fetchConsents() async =>
       MyConsents.fromJson(await _api.get('/consents/me') as Map<String, dynamic>);
 
-  /// 철회. 필수 → 응답의 deletion_scheduled_for (내 기록 삭제 예정)
-  Future<MyConsents> revokeConsent(String type) async =>
-      MyConsents.fromJson(await _api.post('/consents/$type/revoke') as Map<String, dynamic>);
+  /// 철회. 필수 + deleteMyRecords → 응답의 deletion_scheduled_for (7일 뒤 내 기록 삭제, 다시 동의하면 취소)
+  /// deleteMyRecords X → 기록 유지
+  Future<MyConsents> revokeConsent(String type, {bool deleteMyRecords = false}) async => MyConsents.fromJson(
+        await _api.post('/consents/$type/revoke', body: {'delete_my_records': deleteMyRecords})
+            as Map<String, dynamic>,
+      );
 
   Future<List<WithdrawalParent>> withdrawalCheck() async {
     final data = await _api.get('/users/me/withdrawal-check') as Map<String, dynamic>;
     return (data['parents'] as List).map((e) => WithdrawalParent.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  /// 탈퇴 접수 → 삭제 예정 시각. 혼자 쓰는 공간 → deleteSoleParents 확인 필요
-  Future<DateTime> withdraw({required bool deleteSoleParents}) async {
+  /// 탈퇴 (즉시). 혼자 쓰는 공간 → deleteSoleParents 확인 필요 (7일 뒤 공간 삭제)
+  /// deleteMyRecords X → 글은 가족 공간에 유지, 작성자 '탈퇴한 사용자' (음성은 삭제)
+  Future<DateTime> withdraw({required bool deleteSoleParents, bool deleteMyRecords = false}) async {
     final data = await _api.post('/users/me/withdrawal', body: {
       'confirm': true,
       'delete_sole_parents': deleteSoleParents,
+      'delete_my_records': deleteMyRecords,
     }) as Map<String, dynamic>;
     return DateTime.parse(data['scheduled_for'] as String).toLocal();
   }

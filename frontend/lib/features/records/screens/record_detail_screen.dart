@@ -333,7 +333,13 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
           ),
           if (_showOriginal) ...[const SizedBox(height: 8), OriginalBlock(text: original)],
         ],
-        if (record.isVoice && record.audioSeconds != null) ...[
+        if (record.isVoice && !record.audioAvailable) ...[
+          const SizedBox(height: 20),
+          const Text(
+            '작성자가 탈퇴해 음성 파일은 삭제됐어요.',
+            style: TextStyle(fontSize: 15, color: AppColors.subtext),
+          ),
+        ] else if (record.isVoice && record.audioSeconds != null) ...[
           const SizedBox(height: 20),
           AudioPlayerBar(
             seconds: record.audioSeconds!,

@@ -27,6 +27,15 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- 딥링크는 supabase_flutter(app_links)가 처리 → go_router 로 안 넘김 (없는 경로 오류 방지) -->
+            <meta-data android:name="flutter_deeplinking_enabled" android:value="false"/>
+            <!-- 소셜 로그인 복귀 (Env.authRedirect, Supabase Redirect URLs 와 같은 값) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="com.silvercare.silvercare" android:host="login-callback"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

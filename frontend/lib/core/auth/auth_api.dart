@@ -10,6 +10,11 @@ import 'me.dart';
 ///
 /// 휴대폰 OTP: Supabase 대시보드 Phone 공급자 + SMS 업체 설정 필요
 ///   개발 중: Auth → Phone → Test phone numbers (실제 문자 X, 정해 둔 번호·코드)
+/// 카카오: Supabase OAuth (웹 로그인 → 앱 딥링크 복귀, PKCE)
+///   Supabase Kakao 공급자 + Redirect URLs 에 [Env.authRedirect] / 카카오 Redirect URI = Supabase callback
+///   웹: 지금 열린 주소 (예: http://localhost:5000/) 로 복귀 → 페이지 새로 열림 → 시작 화면이 세션 확인
+///     포트 고정 (flutter run -d chrome --web-port 5000) + Redirect URLs 에 http://localhost:5000/**
+///   Windows 등 데스크톱: 복귀 X → 이메일 로그인
 class AuthApi {
   AuthApi({this.client});
 
@@ -50,6 +55,52 @@ class AuthApi {
         _ => '가입하지 못했어요.',
       });
     }
+  }
+
+  /// 카카오 로그인 지원 기기 (Android · iOS · 웹)
+  static bool get supportsKakao =>
+      kIsWeb || defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS;
+
+  /// 카카오 로그인 화면 열기. 로그인 완료는 [signedIn] 으로 (앱 복귀 뒤)
+  /// 반환: 브라우저 열림 여부
+  Future<bool> signInWithKakao() async {
+    _ensureConfigured();
+    if (!supportsKakao) {
+      throw ApiException(
+        statusCode: 0,
+        code: 'UNSUPPORTED_PLATFORM',
+        message: '카카오 로그인은 휴대폰 앱에서만 돼요.',
+      );
+    }
+    try {
+      return await _auth.signInWithOAuth(
+        OAuthProvider.kakao,
+        redirectTo: kIsWeb ? '${Uri.base.origin}/' : Env.authRedirect,
+      );
+    } on AuthException catch (e) {
+      throw _oauthError(e);
+    }
+  }
+
+  /// 소셜 로그인 완료 (딥링크 복귀 → 세션 저장). 실패 → 오류 이벤트 (ApiException)
+  Stream<void> get signedIn => _auth.onAuthStateChange
+      .where((state) => state.event == AuthChangeEvent.signedIn)
+      .map((_) {})
+      .handleError(
+        (Object e) => throw e is AuthException ? _oauthError(e) : _oauthError(null),
+      );
+
+  ApiException _oauthError(AuthException? e) {
+    if (e != null) debugPrint('Supabase OAuth 오류: ${e.statusCode} ${e.code} ${e.message}');
+    final code = e?.code ?? '';
+    final message = code == 'provider_disabled' || code == 'validation_failed'
+        ? '지금은 카카오 로그인이 꺼져 있어요.'
+        : '카카오 로그인을 하지 못했어요. 다시 시도해 주세요.';
+    return ApiException(
+      statusCode: int.tryParse(e?.statusCode ?? '') ?? 0,
+      code: code.isEmpty ? 'OAUTH_ERROR' : code,
+      message: kDebugMode && e != null ? '$message\n(${e.code ?? ''} ${e.message})' : message,
+    );
   }
 
   /// 저장된 로그인 세션 있음 (앱 재실행 시 바로 다음 단계로)
@@ -128,6 +179,9 @@ class AuthApi {
     final String message;
     if (code.contains('rate_limit') || e.statusCode == '429') {
       message = '요청이 많아요. 잠시 후 다시 시도해 주세요.';
+    } else if (code == 'phone_provider_disabled' || code == 'sms_send_failed') {
+      // 대시보드 Phone 공급자 꺼짐 · SMS 업체 설정 오류
+      message = kDebugMode ? '문자를 보내지 못했어요. ($code: ${e.message})' : '문자를 보내지 못했어요. 잠시 후 다시 시도해 주세요.';
     } else if (code == 'otp_expired') {
       message = '인증번호 시간이 지났어요. 다시 받아 주세요.';
     } else if (sending) {

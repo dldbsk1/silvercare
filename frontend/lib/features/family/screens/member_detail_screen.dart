@@ -135,7 +135,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
     if (me == null) return;
     final yes = await _confirm(
       title: '${_member.name}에게 관리자를 넘길까요?',
-      body: '넘기면 나는 \'기록 가능\'으로 바뀌어요.\n가족 초대 · 권한 · 부모님 정보는 ${_member.name}만 바꿀 수 있어요.\n내가 만든 초대 링크는 취소돼요.',
+      body: '넘기면 나는 \'기록 가능\'으로 바뀌어요.\n가족 초대 · 권한 · 부모님 정보는 ${_member.name}만 바꿀 수 있어요.\n내가 만든 초대 코드는 취소돼요.',
       action: '넘기기',
     );
     if (!yes) return;

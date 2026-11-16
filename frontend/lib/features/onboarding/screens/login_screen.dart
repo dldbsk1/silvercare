@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/theme.dart';
+import '../../../core/api/api_exception.dart';
+import '../../../core/auth/auth_api.dart';
 
 /// SCR_A_000 시작하기 (A-ON-001)
 ///
@@ -9,22 +13,92 @@ import '../../../app/theme.dart';
 /// - 위: 로고 + 문구 / 아래: 로그인 버튼 4개 (간격 8, 좌우 24)
 /// - 배경 원형 번짐 2개는 맨 뒤 (Figma에서는 버튼 위에 덮여 있었음 → 버튼 눌림 막지 않게)
 ///
+/// 카카오 → 카카오 로그인 웹 (카카오톡 앱 로그인 선택 가능) → 앱 복귀 → GET /auth/me → 다음 단계
+///   데스크톱: 안내만 (딥링크 복귀 X)
 /// 휴대폰 번호 → /onboarding/phone (Supabase 문자 인증)
-/// 이메일 (개발용) → /login/email. 제품 로그인 준비 전 다음 화면 개발용
-/// TODO(로그인 연결): Supabase OAuth (카카오·구글) + 앱 딥링크 복귀 설정
-///   네이버는 Supabase 기본 공급자 아님 → 별도 OIDC 설정 필요
+/// 이메일 (개발용) → /login/email
+/// TODO(로그인): 구글 (Supabase OAuth) · 네이버 (Supabase 기본 공급자 X → 별도 OIDC)
 ///
 /// 브랜드 로고 (각 사 로그인 버튼 가이드)
 ///   카카오: 검정 말풍선 심볼 (#000000), 배경 #FEE500
 ///   네이버: 흰색 N 심볼, 배경 녹색
 ///   구글: 4색 G (assets/images/google_logo.png), 배경 흰색
-class LoginScreen extends StatelessWidget {
-  const LoginScreen({super.key});
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key, this.authApi});
 
-  void _comingSoon(BuildContext context, String method) {
+  /// 테스트용 교체
+  final AuthApi? authApi;
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  late final AuthApi _auth = widget.authApi ?? AuthApi();
+  StreamSubscription<void>? _signedInSub;
+
+  /// 카카오 로그인 진행 중 (브라우저 → 앱 복귀 기다림)
+  /// 휴대폰·이메일 로그인 완료 이벤트는 그 화면이 처리 → 여기선 무시
+  bool _waitingKakao = false;
+  bool _launching = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (AuthApi.configured || widget.authApi != null) {
+      _signedInSub = _auth.signedIn.listen(
+        (_) => _onSignedIn(),
+        onError: (Object e) => _onKakaoError(e is ApiException ? e.message : '카카오 로그인을 하지 못했어요.'),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _signedInSub?.cancel();
+    super.dispose();
+  }
+
+  void _toast(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text('$method 로그인은 준비 중이에요.')));
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _comingSoon(String method) => _toast('$method 로그인은 준비 중이에요.');
+
+  Future<void> _loginKakao() async {
+    if (!AuthApi.supportsKakao && widget.authApi == null) {
+      _toast('카카오 로그인은 휴대폰 앱에서만 돼요. 이 기기에서는 이메일로 시작해 주세요.');
+      return;
+    }
+    setState(() => _launching = true);
+    try {
+      _waitingKakao = await _auth.signInWithKakao();
+      if (!_waitingKakao && mounted) _toast('카카오 로그인 화면을 열지 못했어요.');
+    } on ApiException catch (e) {
+      _waitingKakao = false;
+      if (mounted) _toast(e.message);
+    } finally {
+      if (mounted) setState(() => _launching = false);
+    }
+  }
+
+  Future<void> _onSignedIn() async {
+    if (!_waitingKakao || !mounted) return;
+    _waitingKakao = false;
+    try {
+      final me = await _auth.fetchMe();
+      if (mounted) context.go(me.nextRoute);
+    } on ApiException catch (e) {
+      if (mounted) _toast(e.message);
+    }
+  }
+
+  void _onKakaoError(String message) {
+    if (!_waitingKakao || !mounted) return;
+    _waitingKakao = false;
+    _toast(message);
   }
 
   @override
@@ -59,14 +133,14 @@ class LoginScreen extends StatelessWidget {
                       size: Size(20, 18),
                       painter: _KakaoSymbol(),
                     ),
-                    onPressed: () => _comingSoon(context, '카카오'),
+                    onPressed: _launching ? null : _loginKakao,
                   ),
                   const SizedBox(height: 8),
                   _LoginButton(
                     label: '구글로 시작하기',
                     color: Colors.white,
                     icon: const _BrandLogo('google_logo.png'),
-                    onPressed: () => _comingSoon(context, '구글'),
+                    onPressed: () => _comingSoon('구글'),
                   ),
                   const SizedBox(height: 8),
                   _LoginButton(
@@ -76,7 +150,7 @@ class LoginScreen extends StatelessWidget {
                       size: Size(15, 15),
                       painter: _NaverSymbol(),
                     ),
-                    onPressed: () => _comingSoon(context, '네이버'),
+                    onPressed: () => _comingSoon('네이버'),
                   ),
                   const SizedBox(height: 8),
                   _LoginButton(
@@ -147,7 +221,9 @@ class _LoginButton extends StatelessWidget {
   final String label;
   final Color color;
   final Widget? icon;
-  final VoidCallback onPressed;
+
+  /// null → 눌림 X (카카오 화면 여는 중)
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -156,6 +232,9 @@ class _LoginButton extends StatelessWidget {
       style: FilledButton.styleFrom(
         backgroundColor: color,
         foregroundColor: AppColors.text,
+        // 여는 중: 색 유지, 글자만 흐리게
+        disabledBackgroundColor: color,
+        disabledForegroundColor: AppColors.text.withValues(alpha: 0.4),
         minimumSize: const Size.fromHeight(52),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),

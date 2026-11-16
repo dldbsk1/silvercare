@@ -227,11 +227,13 @@ def test_versions_three_edits(client, db, parent_id):
     )
 
     url = f"/v1/records/{record_id}"
-    client.patch(url, json={"current_text": "오늘 식사를 도움받아 하셨어요."})
-    client.patch(url, json={"source": "call"})
-    client.patch(url, json={"item_codes": ["phys_eating", "phys_toilet_use"]})
-    # 바뀐 것 없음 → 이력 X
-    client.patch(url, json={"source": "call"})
+    for body in [
+        {"current_text": "오늘 식사를 도움받아 하셨어요."},
+        {"source": "call"},
+        {"item_codes": ["phys_eating", "phys_toilet_use"]},
+        {"source": "call"},  # 바뀐 것 없음 → 이력 X
+    ]:
+        assert patch_record(client, url, body).status_code == 200
 
     data = client.get(f"{url}/versions").json()["data"]
 

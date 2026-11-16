@@ -1,0 +1,12 @@
+# 비밀값·로컬 환경 이미지에 포함 X
+.env
+.env.*
+!.env.production.example
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+run.ps1
+Dockerfile
+.dockerignore

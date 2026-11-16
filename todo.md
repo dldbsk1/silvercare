@@ -391,7 +391,7 @@
 - [ ] 운영 `.env`: `ENV=production` 필수 (없으면 `/v1/dev` 열림), secret key는 서버에만
 - [ ] 실제 동의 문구 발행 (`consent_documents`, 더미 금지)
 - [ ] `survey_items` 52항목을 최신 공식 조사표와 1회 대조 (현재 legacy 버전)
-- [ ] Dockerfile — API 서버·워커 같은 이미지, 실행 명령만 다르게
+- [x] Dockerfile — API 서버·워커 같은 이미지, 실행 명령만 다르게 (`backend/Dockerfile`, 환경 변수 예시 `backend/.env.production.example`)
 - [ ] 배포 순서: 워커 중지 → 마이그레이션 → 새 워커 시작 (lease 없는 이전 워커와 섞이지 않게)
 - [ ] 워커 개수 결정 (긴 받아쓰기가 대기열을 막지 않게, 여러 개 동시 실행 가능)
 - [ ] 운영·스테이징 `CURSOR_SECRET` 필수 (없으면 시작 안 됨, 긴 임의 문자열)

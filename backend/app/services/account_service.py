@@ -5,10 +5,11 @@
 - 부모님별 상태
   ok                 다른 관리자 있음 / 내가 관리자 아님 → 바로 나가기
   transfer_required  내가 유일한 관리자 + 다른 가족 있음 → 요청 안에서 넘길 사람 지정
-  sole_member        나 혼자 → 확인 (delete_sole_parents) 후 공간 삭제 예약, 가족 관계는 실행 때까지 유지
-                     (관리자 0명 공간 X, 탈퇴 계정은 API 차단이라 접근 X)
+  sole_member        나 혼자 → 확인 (delete_sole_parents) 후 공간 삭제 예약 (7일, parent_deletion)
+                     가족 관계는 공간 삭제 때까지 유지 (관리자 0명 공간 X, 탈퇴 계정은 API 차단이라 접근 X)
 - 하나라도 실패 → 아무것도 안 바뀜 (409)
-- 처리: 관리자 넘기기 → 나가기 → 내 초대 취소 → 기기 토큰 끔 → withdrawn_at → 삭제 예약
+- 처리: 관리자 넘기기 → 나가기 → 내 초대 취소 → 기기 토큰 끔 → withdrawn_at → 계정 삭제 즉시 예약
+  내 기록: delete_my_records → 삭제 / 아니면 글 유지·작성자 '탈퇴한 사용자'·음성 삭제 (deletion_service)
 - 다시 요청 → 같은 결과
 """
 from sqlalchemy.orm import Session
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.repositories import family_repo, invite_repo, notification_repo, parent_repo, user_repo
 from app.schemas.account import WithdrawalIn
-from app.services import deletion_service
+from app.services import deletion_service, parent_deletion_service
 
 
 def lock_active_user(db: Session, user_id: str):
@@ -105,13 +106,15 @@ def withdraw(db: Session, user_id: str, body: WithdrawalIn) -> dict:
 
     for state in states:
         invite_repo.revoke_created_by(db, state["parent_id"], user_id)
-        if state["status"] != SOLE_MEMBER:
+        if state["status"] == SOLE_MEMBER:
+            parent_deletion_service.schedule_for_withdrawal(db, user_id, state["parent_id"])
+        else:
             family_repo.delete_member(db, state["my_member_id"])
 
     notification_repo.revoke_all_devices(db, user_id)
     user_repo.mark_withdrawn(db, user_id)
 
-    return to_withdrawal_out(deletion_service.schedule_account(db, user_id, sole))
+    return to_withdrawal_out(deletion_service.schedule_account(db, user_id, body.delete_my_records))
 
 
 def check_transfers(states: list[dict], body: WithdrawalIn) -> dict[str, str]:

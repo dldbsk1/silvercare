@@ -6,10 +6,13 @@
   → 초대 생성·수락·역할 변경·내보내기·나가기 직렬화. 잠금 뒤 요청자 역할 다시 확인
 - 마지막 관리자: 409 LAST_ADMIN (서비스) + 트랜잭션 끝 검사 (DB, 006)
 - 관리자 권한 잃음 (강등·내보내기·나가기) → 그 사람이 만든 미사용 초대 취소
-- 토큰: 원문은 생성 응답에만, DB엔 SHA-256
+- 초대 코드: 8자리 (Crockford Base32, 40비트) · 보여줄 때 XXXX-XXXX
+  입력: 대소문자·하이픈·공백 무시, O→0 · I/L→1 / 원문은 생성 응답에만, DB엔 정리한 코드의 SHA-256
+  예전 43자 토큰 → 그대로 해시 (호환)
 - 내보내기 = 가족 관계만 삭제. 작성 기록·수정 이력·동의 기록 유지
 """
 import hashlib
+import re
 import secrets
 
 from sqlalchemy.orm import Session
@@ -24,11 +27,31 @@ from app.services.access import ParentAccess, get_parent_access
 
 INVITE_VALID_DAYS = 7
 MAX_ACTIVE_INVITES = 10
-TOKEN_BYTES = 32
+# 헷갈리는 글자 (I L O U) 뺀 32종
+CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+CODE_LENGTH = 8
+CODE_TRIES = 5
+CODE_CONFUSABLE = str.maketrans({"O": "0", "I": "1", "L": "1"})
+CODE_PATTERN = re.compile(f"[{CODE_ALPHABET}]{{{CODE_LENGTH}}}")
+
+
+def new_code() -> str:
+    return "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
+
+
+def format_code(code: str) -> str:
+    """K7QM4XPA → K7QM-4XPA (읽기·불러 주기 쉽게)"""
+    return f"{code[:4]}-{code[4:]}"
+
+
+def normalize_code(token: str) -> str:
+    """k7qm-4xpa · K7QM 4XPA · K7QM-4XPA → K7QM4XPA. 8자리 코드 아님 → 앞뒤 공백만 제거 (예전 토큰)"""
+    compact = re.sub(r"[\s-]", "", token).upper().translate(CODE_CONFUSABLE)
+    return compact if CODE_PATTERN.fullmatch(compact) else token.strip()
 
 
 def hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
+    return hashlib.sha256(normalize_code(token).encode()).hexdigest()
 
 
 def not_found() -> AppError:
@@ -71,16 +94,22 @@ def create_invite(db: Session, access: ParentAccess, body: InviteCreateIn) -> di
             f"사용하지 않은 초대가 {MAX_ACTIVE_INVITES}개예요. 안 쓰는 초대를 취소해 주세요."
         )
 
-    token = secrets.token_urlsafe(TOKEN_BYTES)
+    # 40비트 → 겹침 거의 X. 겹치면 다시 (token_hash unique)
+    for _ in range(CODE_TRIES):
+        code = new_code()
+        if invite_repo.get_by_hash(db, hash_token(code)) is None:
+            break
+    else:
+        raise AppError(503, "SERVICE_UNAVAILABLE", "잠시 후 다시 시도해 주세요.")
     row = invite_repo.insert_invite(
         db, access.parent_id, access.user_id, body.role,
-        hash_token(token), INVITE_VALID_DAYS
+        hash_token(code), INVITE_VALID_DAYS
     )
 
     return {
         "invite_id": str(row["id"]),
-        "invite_url": f"{settings.INVITE_BASE_URL}#t={token}",
-        "token": token,
+        "invite_url": f"{settings.INVITE_BASE_URL}#t={code}",
+        "token": format_code(code),
         "role": row["role"],
         "expires_at": row["expires_at"],
     }

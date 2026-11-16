@@ -4,6 +4,7 @@ from app.api.deps import CurrentUser, DbSession
 from app.schemas.common import DataResponse
 from app.schemas.consents import (
     ConsentDocumentOut,
+    ConsentRevokeIn,
     ConsentsIn,
     ConsentStatusOut,
     ConsentType,
@@ -36,6 +37,10 @@ def get_my_consents(user: CurrentUser, db: DbSession):
 
 
 @router.post("/{consent_type}/revoke", response_model=DataResponse[ConsentStatusOut])
-def revoke_consent(consent_type: ConsentType, user: CurrentUser, db: DbSession):
+def revoke_consent(
+    consent_type: ConsentType, user: CurrentUser, db: DbSession, body: ConsentRevokeIn | None = None
+):
+    """필수 동의 → 기록 기능 중지. delete_my_records → 7일 뒤 내 기록 삭제 (다시 동의하면 취소)"""
+    delete_records = body.delete_my_records if body else False
     with db.begin():
-        return {"data": consent_service.revoke(db, user.id, consent_type)}
+        return {"data": consent_service.revoke(db, user.id, consent_type, delete_records)}

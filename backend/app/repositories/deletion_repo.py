@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 REQUEST_COLUMNS = """
     id, requester_id, request_type, status::text AS status,
-    requested_at, scheduled_for, parent_ids
+    requested_at, scheduled_for, parent_ids, delete_records
 """
 
 # 열린 요청: 접수됨 · 실행 중 (unique index deletion_requests_open과 같은 조건)
@@ -39,16 +39,22 @@ def insert_request(
     user_id: str,
     request_type: str,
     grace_days: int,
-    parent_ids: list[str] = ()
+    parent_ids: list[str] = (),
+    delete_records: bool = True,
 ):
     return db.execute(
         text(f"""
             INSERT INTO deletion_requests
-                (requester_id, request_type, scheduled_for, parent_ids)
-            VALUES (:u, :t, now() + make_interval(days => :days), CAST(:parent_ids AS uuid[]))
+                (requester_id, request_type, scheduled_for, parent_ids, delete_records)
+            VALUES (
+                :u, :t, now() + make_interval(days => :days), CAST(:parent_ids AS uuid[]), :delete_records
+            )
             RETURNING {REQUEST_COLUMNS}
         """),
-        {"u": user_id, "t": request_type, "days": grace_days, "parent_ids": list(parent_ids)}
+        {
+            "u": user_id, "t": request_type, "days": grace_days,
+            "parent_ids": list(parent_ids), "delete_records": delete_records,
+        }
     ).mappings().one()
 
 
@@ -137,6 +143,25 @@ def delete_records_by(db: Session, user_id: str) -> int:
     return db.execute(
         text("DELETE FROM records WHERE author_id = :u"), {"u": user_id}
     ).rowcount
+
+
+def mark_audio_deleted(db: Session, user_id: str) -> int:
+    """기록은 남기고 음성만 삭제한 표시 (파일은 실행 2단계에서 지움). 재생 → 410"""
+    return db.execute(
+        text("""
+            UPDATE records SET audio_deleted_at = now()
+            WHERE author_id = :u AND audio_path IS NOT NULL AND audio_deleted_at IS NULL
+        """),
+        {"u": user_id}
+    ).rowcount
+
+
+def kakao_user_id(db: Session, user_id: str) -> str | None:
+    """카카오 회원번호 (Supabase 로그인 연결 정보). 카카오 로그인 아님 · 이미 삭제 → None"""
+    return db.execute(
+        text("SELECT provider_id FROM auth.identities WHERE user_id = :u AND provider = 'kakao' LIMIT 1"),
+        {"u": user_id}
+    ).scalar()
 
 
 def sole_parent_ids(db: Session, user_id: str, parent_ids: list[str]) -> list[str]:

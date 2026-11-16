@@ -35,8 +35,10 @@ class AdminTransferIn(BaseModel):
 class WithdrawalIn(BaseModel):
     confirm: Literal[True]
     admin_transfers: list[AdminTransferIn] = Field(default_factory=list, max_length=50)
-    # sole_member 부모님 공간 삭제 확인
+    # sole_member 부모님 공간 삭제 확인 (7일 뒤 공간 삭제)
     delete_sole_parents: bool = False
+    # 내가 쓴 기록도 모두 지우기. false → 글은 가족 공간에 유지, 작성자 '탈퇴한 사용자' (음성은 삭제)
+    delete_my_records: bool = False
 
     model_config = {"extra": "forbid"}
 
@@ -44,5 +46,5 @@ class WithdrawalIn(BaseModel):
 class WithdrawalOut(BaseModel):
     request_id: str
     status: str
-    # 삭제 예정 시각. ⚖️ 유예기간 법률 확인 전 임시 7일
+    # 계정 삭제 실행 시각 (즉시 = 접수 시각, 워커가 바로 처리)
     scheduled_for: datetime

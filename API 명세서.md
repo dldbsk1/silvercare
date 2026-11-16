@@ -114,7 +114,8 @@
 | Supabase Auth SDK | 카카오 OAuth | SDK OAuth 흐름 | P0 | 공급자 설정 후 구현, 자체 `/auth/kakao` 토큰 발급 API 없음 |
 | Supabase Auth SDK | 세션 갱신·로그아웃 | SDK refresh/sign_out | P0/P1 | 인증 세션 제공자가 담당 |
 | FastAPI | 내 온보딩 상태 | `GET /v1/auth/me` | P0 | 서비스 프로필, 동의·부모님 연결 확인 |
-| FastAPI | 계정 탈퇴 요청 | `POST /v1/users/me/deletion-requests` | P1 | 실제 삭제는 별도 처리, 관리자 위임 필요 |
+| FastAPI | 탈퇴 전 확인 | `GET /v1/users/me/withdrawal-check` | P0 | 부모님 공간별 ok · transfer_required · sole_member |
+| FastAPI | 탈퇴 | `POST /v1/users/me/withdrawal` | P0 | 즉시 처리 (아래 14.3) |
 | FastAPI | QR 로그인 요청 발급 | `POST /v1/auth/qr/sessions` | P1 | 일회용 세션, 3분 만료 |
 | FastAPI | 앱 QR 승인 | `POST /v1/auth/qr/sessions/{id}/approve` | P1 | 앱에서 사용자 인증 후 승인 |
 | FastAPI | QR 처리 상태 조회 | `GET /v1/auth/qr/sessions/{id}` | P1 | 소비·만료 확인 |
@@ -141,7 +142,7 @@
 | GET | `/v1/consents/required` | P0 | 유효 동의 문구·버전·필수 여부 조회 |
 | POST | `/v1/consents` | P0 | 사용자별 동의/비동의 저장 |
 | GET | `/v1/consents/me` | P0 | 최신 상태·과거 이력 조회 |
-| POST | `/v1/consents/{type}/revoke` | P0 | 철회, 필수 동의 철회 시 후속 처리 제한 |
+| POST | `/v1/consents/{type}/revoke` | P0 | 철회, 필수 동의 철회 시 기록 기능 중지. 본문 `{"delete_my_records": bool}` (선택, 기본 false) |
 | POST | `/v1/parents/{parent_id}/authorizations` | P0 준비 | 돌봄 대상자 정보 처리 권한/동의 근거 제출 |
 | GET | `/v1/parents/{parent_id}/authorizations` | P0 준비 | 확인 상태 조회 |
 | POST | `/v1/deletion-requests` | P1 | 계정/동의철회/정보삭제 접수 |
@@ -207,7 +208,9 @@
 {"data":{"invite_url":"https://example.invalid/i/<one-time-secret>","expires_at":"2026-11-01T12:00:00+09:00"}}
 ```
 
-`invite_url`은 **형식 예시**이며 실제 도메인·경로는 구현 시 확정한다. DB에는 링크 원문이 아니라 `token_hash`만 저장한다. 가족 초대 수락 시 역할을 무조건 신뢰하지 말고 서버가 초대 데이터로 결정한다.
+`invite_url`은 **형식 예시**이며 실제 도메인·경로는 구현 시 확정한다. DB에는 링크 원문이 아니라 `token_hash`만 저장한다.
+
+**초대 코드 (`token`)**: 8자리 `XXXX-XXXX` (Crockford Base32 `0-9 A-Z` 중 I·L·O·U 제외, 40비트). 응답 `token`은 하이픈 포함, `invite_url`의 `#t=`는 하이픈 없이. 베타는 링크 대신 코드만 공유한다 (앱 링크 도메인 확정 전). `/v1/invites/preview`·`/accept`의 `token`은 대소문자·하이픈·공백을 무시하고 `O→0`, `I·L→1`로 바꿔 확인한다 (예: `k7qm 4xpa` = `K7QM-4XPA`). 예전 43자 토큰도 받는다. 무작위 시도는 사용자·IP별 요청 제한 + 7일·1회로 막는다. 가족 초대 수락 시 역할을 무조건 신뢰하지 말고 서버가 초대 데이터로 결정한다.
 
 ---
 
@@ -655,6 +658,25 @@
 - 평상시 `hide/exclude`는 기록지 집계 제외이지 실제 삭제가 아니다.
 - 사용자 탈퇴, 동의 철회, 정보주체의 삭제 요청은 `deletion_requests`로 접수하고 **DB/Storage/백업/외부 처리업체 데이터**까지 처리 범위를 결정하는 별도 절차가 필요하다.
 - 정보 주체 적법성, 삭제 기한, 예외적 보존 의무는 개발자의 임의 정책으로 확정하지 않는다.
+
+**현재 구현 (⚖️ 법률 확인 전 임시, `DELETION_EXECUTE_ENABLED`로 실행 여부 제어)**
+
+`POST /v1/users/me/withdrawal`
+```
+{"confirm": true, "admin_transfers": [{"parent_id": "...", "member_id": "..."}],
+ "delete_sole_parents": true, "delete_my_records": false}
+```
+- 즉시 처리: 관리자 넘기기 → 가족 나가기 → 내 초대 취소 → 기기 끔 → 탈퇴 표시 → 계정 삭제 예약(지금) + 워커 작업 `run_deletions`
+- 워커: 내 음성 파일 삭제 → 카카오 연결 끊기 → Supabase 로그인 계정 삭제 → 이름·전화번호 삭제
+- `delete_my_records: false` (기본): 글·분류·수정 이력은 가족 공간에 유지, 작성자 `author_name` = `"탈퇴한 사용자"`, 음성 기록은 `audio_available: false` · `GET /records/{id}/audio` → 410 `AUDIO_DELETED`
+- `delete_my_records: true`: 내가 쓴 기록 전부 삭제
+- 혼자 쓰던 부모님 공간 (`delete_sole_parents` 확인 필수): 공간 삭제 요청 7일 유예 (`parent_deletions`)
+- 응답 `scheduled_for` = 처리 시각 (접수 즉시)
+
+`POST /v1/consents/{type}/revoke` (필수 동의)
+- 기록·조회 기능 중지 (다시 동의하면 이어서 사용)
+- `delete_my_records: true` → 7일 뒤 내 기록 삭제 예약 (`deletion_scheduled_for`), 그 전에 다시 동의하면 취소
+- `false` (기본) → 기록 유지, 예약 없음
 
 ### 14.4 보안·성능·접근성 수용 기준
 

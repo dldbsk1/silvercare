@@ -9,7 +9,7 @@ from app.schemas.parents import FamilyRole
 # 초대로 줄 수 있는 역할 (관리자는 가족이 된 뒤 역할 변경으로)
 InviteRole = Literal["writer", "viewer"]
 
-# secrets.token_urlsafe(32) → 43자
+# 초대 코드 8자리 (XXXX-XXXX). 예전 43자 토큰도 받음
 TOKEN_MAX_LENGTH = 100
 
 
@@ -25,8 +25,9 @@ class InviteCreateIn(BaseModel):
 
 class InviteCreatedOut(BaseModel):
     invite_id: str
-    # {INVITE_BASE_URL}#t={token}. 토큰은 이 응답에서만 (DB엔 해시)
+    # {INVITE_BASE_URL}#t={하이픈 뺀 코드}. 코드는 이 응답에서만 (DB엔 해시)
     invite_url: str
+    # 초대 코드 XXXX-XXXX (베타: 링크 대신 이것만 공유)
     token: str
     role: InviteRole
     expires_at: datetime
@@ -42,7 +43,7 @@ class InviteOut(BaseModel):
 
 
 class InviteTokenIn(BaseModel):
-    """토큰: URL 경로·쿼리 X, 본문으로만 (접속 기록 노출 방지)"""
+    """초대 코드: URL 경로·쿼리 X, 본문으로만 (접속 기록 노출 방지). 대소문자·하이픈·공백 무시"""
 
     token: str = Field(min_length=1, max_length=TOKEN_MAX_LENGTH)
 

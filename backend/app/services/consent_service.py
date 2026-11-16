@@ -141,14 +141,19 @@ def save_consents(db: Session, user_id: str, items: list) -> dict:
     return status
 
 
-def revoke(db: Session, user_id: str, consent_type: str) -> dict:
-    """철회. 필수 동의 → 기록 기능 중지 (ConsentedUser 의존성) + 삭제 예약 (예정일 응답)"""
+def revoke(db: Session, user_id: str, consent_type: str, delete_my_records: bool = False) -> dict:
+    """철회. 필수 동의 → 기록 기능 중지 (ConsentedUser 의존성)
+
+    - delete_my_records → 내 기록 삭제 예약 (예정일 응답, 다시 동의하면 취소)
+    - 아니면 기록 유지 (예약 X). 이미 있는 예약은 그대로
+    ⚖️ 철회 뒤 기록 보관 근거·작성자 표시: 법률 확인 전 임시
+    """
     consent_repo.lock_user(db, user_id)
 
     if consent_repo.revoke_consents(db, user_id, consent_type) == 0:
         raise AppError(404, "NOT_FOUND", "철회할 동의가 없어요.")
 
-    if consent_type in required_types(active_documents(db)):
+    if delete_my_records and consent_type in required_types(active_documents(db)):
         deletion_service.schedule_consent_withdrawal(db, user_id)
 
     return get_status(db, user_id)

@@ -122,7 +122,22 @@
   - [x] 호칭 1~20자, 나이대·신청 단계 값 검증
   - [x] 이름·주민번호 저장 안 함 (POL-07)
 - [x] `GET /v1/parents`, `GET /v1/parents/{id}`
-- [ ] 👤 Supabase에서 카카오 로그인·휴대폰 OTP 공급자 설정 (A-ON-001)
+- [x] Flutter: 카카오 로그인 (Supabase OAuth → 딥링크 `com.silvercare.silvercare://login-callback` 복귀) · 휴대폰 OTP 화면
+- [ ] 👤 카카오 디벨로퍼스: 앱 만들기 → 카카오 로그인 ON → Redirect URI `https://<프로젝트>.supabase.co/auth/v1/callback` → 동의 항목 닉네임·프로필 사진·이메일(비즈 앱 전환 필요) → 보안 Client Secret 발급
+- [ ] 👤 Supabase: Auth → Providers → Kakao (REST API 키 · Client Secret) / URL Configuration → Redirect URLs 에 `com.silvercare.silvercare://login-callback`
+- [ ] 👤 Supabase: Auth → Providers → Phone + SMS 업체 (Twilio 등, 또는 Send SMS Hook 로 국내 업체) / 개발 중 Test phone numbers
+- [x] 탈퇴 뒤 화면 (삭제 예정일 · 로그아웃) / 삭제 실행 때 카카오 연결 끊기 (`app/db/kakao_admin.py`). 탈퇴 취소 X (정책)
+- [x] 탈퇴 즉시 처리 · "내가 쓴 기록도 모두 지우기" 선택 (탈퇴·필수 동의 철회) · 탈퇴 안내 문구 · 기본은 기록 유지 + 작성자 '탈퇴한 사용자' + 음성 삭제 (migration 010)
+- [ ] ⚖️ 법률 확인 후 수정 (탈퇴·동의 철회 데이터 처리) — 지금 구현은 임시
+  - 탈퇴 뒤 공동 돌봄 기록(글) 보관 근거·범위: 가족 공유 동의 · 부모님 정보 처리 근거가 유효하면 유지해도 되는지
+  - 필수 동의 철회 뒤 처리: 계정 관련 처리 종료 범위, 기록 유지 시 작성자 표시 (지금: 이름 그대로, 탈퇴만 '탈퇴한 사용자')
+  - 작성자 정보: 이름·전화번호 삭제 + '탈퇴한 사용자' 표시로 충분한지 / 음성 파일 삭제 · 글 유지 기준
+  - 안내 문구 확정: 앱 `data_choice_dialog.dart` (`withdrawalNotes` · `revokeNotes`) · 탈퇴 뒤 화면 · 약관·개인정보 처리방침에 같은 내용
+  - "기록에 담긴 내 개인정보는 따로 삭제 요청" → 요청 창구(문의 메일·화면) 만들기 + 처리 절차
+  - 동의 철회 기록 삭제 유예 7일 · 공간 삭제 유예 7일 확정
+  - `DELETION_EXECUTE_ENABLED` 운영에서 켜는 시점 (꺼져 있으면 탈퇴 계정 삭제 안 됨 → 같은 계정 재가입 불가)
+- [ ] 👤 서버 `.env` 에 `KAKAO_ADMIN_KEY` (카카오 디벨로퍼스 → 앱 키 → Admin 키). 없으면 연결 끊기 건너뜀 (경고 로그). 운영 필수
+- [ ] 패키지 이름 `com.silvercare.silvercare` 확정 (바뀌면 딥링크 스킴 · Supabase Redirect URLs 같이)
 - [ ] 👤 Flutter: 인증번호 3분 제한·재발송, 이미 가입한 번호 → 로그인 전환
 
 ---
@@ -302,7 +317,7 @@
 - [x] 마지막 관리자 DB 검사 (역할 변경·삭제·부모님 생성, 공간 삭제는 통과)
 - [x] A-5 탈퇴: 같은 보호 규칙, 잠금 순서 사용자 → 부모님(id 순). 부모님 등록·초대 수락도 사용자 먼저
 - [ ] 배포 설정: `INVITE_BASE_URL`(앱 링크 도메인), `TRUSTED_PROXY_HOPS`(프록시 수)
-- [ ] 👤 Flutter: 초대 링크로 가입 시 부모님 등록 단계 건너뛰기
+- [x] 👤 Flutter: 초대받은 사람 → 첫 설정 [초대 코드 입력] → 초대 코드·메시지 붙여넣기 (베타: 링크 대신 코드 공유) → 미리보기·동의·(이름) → 수락 (부모님 등록 건너뜀). 링크로 앱 바로 열기(딥링크)는 위 A-3 항목 남음
 
 ### 관찰 체크리스트 — A-TASK
 - [ ] `GET /v1/parents/{id}/checklists/suggestions` — 없음·부족 항목 최대 6개

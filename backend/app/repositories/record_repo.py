@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 
 # 표시 이름. 탈퇴 계정 → 고정 문구 (삭제 실행 전 남은 기록·다른 가족 기록의 수정 이력)
-USER_NAME = "CASE WHEN u.withdrawn_at IS NOT NULL THEN '탈퇴한 가족' ELSE u.display_name END"
+USER_NAME = "CASE WHEN u.withdrawn_at IS NOT NULL THEN '탈퇴한 사용자' ELSE u.display_name END"
 
 RECORD_COLUMNS = f"""
     r.id, r.parent_id, r.author_id,
@@ -17,7 +17,7 @@ RECORD_COLUMNS = f"""
     r.classification_status::text AS classification_status,
     r.classified_by::text AS classified_by,
     r.text_version, r.original_text, r.current_text,
-    r.audio_path, r.audio_duration_seconds,
+    r.audio_path, r.audio_duration_seconds, r.audio_deleted_at,
     r.recorded_at, r.occurred_at, r.created_at, r.updated_at,
     (SELECT {USER_NAME} FROM users u WHERE u.id = r.author_id) AS author_name,
     -- 사용자 수정 이력 있음 (record_versions: PATCH로 실제 바뀐 칸만 저장)

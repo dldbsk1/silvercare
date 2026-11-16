@@ -110,6 +110,8 @@ def to_detail(db: Session, record, user_id: str) -> dict:
         "edit_version": record_repo.edit_version(db, record["id"]),
         "symptom": symptom_of(db, record),
         "audio_duration_seconds": record["audio_duration_seconds"],
+        # 음성 기록인데 false → 작성자 탈퇴로 음성 삭제 (글은 유지)
+        "audio_available": record["audio_path"] is not None and record["audio_deleted_at"] is None,
         "items": [dict(i) for i in record_repo.get_items(db, record["id"])],
         "created_at": record["created_at"],
         "updated_at": record["updated_at"],
@@ -288,6 +290,8 @@ def get_audio_url(db: Session, user_id: str, record_id: str) -> dict:
     _, record = record_access(db, user_id, record_id)
     if record["audio_path"] is None:
         raise AppError(404, "NOT_FOUND", "음성이 없는 기록이에요.")
+    if record["audio_deleted_at"] is not None:
+        raise AppError(410, "AUDIO_DELETED", "작성자가 탈퇴해 음성 파일이 삭제됐어요.")
 
     return {
         "url": storage.create_signed_download_url(

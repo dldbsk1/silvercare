@@ -186,6 +186,8 @@ class RecordOut(RecordListItemOut):
     # 증상 기록만
     symptom: RecordSymptomOut | None = None
     audio_duration_seconds: int | None
+    # 재생 가능 (음성 있음 + 삭제 안 됨)
+    audio_available: bool = False
     items: list[RecordItemOut]
     created_at: datetime
     updated_at: datetime

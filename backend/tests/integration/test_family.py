@@ -1,4 +1,6 @@
 """가족 (A-3): 초대 · 미리보기 · 수락 · 구성원 · 역할 · 내보내기 · 마지막 관리자"""
+import re
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -96,7 +98,9 @@ def test_create_invite(client, db, admin_id, parent_id):
     assert response.status_code == 201
     data = response.json()["data"]
     assert data["role"] == "viewer"
-    assert data["invite_url"].endswith(f"#t={data['token']}")
+    # 초대 코드 8자리 XXXX-XXXX (헷갈리는 글자 X)
+    assert re.fullmatch(r"[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}", data["token"])
+    assert data["invite_url"].endswith(f"#t={data['token'].replace('-', '')}")
     assert "?" not in data["invite_url"]
     # DB엔 해시만
     assert sql_scalar(db, "SELECT count(*) FROM family_invites WHERE token_hash = :t", t=data["token"]) == 0
@@ -104,6 +108,21 @@ def test_create_invite(client, db, admin_id, parent_id):
         db, "SELECT count(*) FROM family_invites WHERE token_hash = :h",
         h=family_service.hash_token(data["token"])
     ) == 1
+
+
+
+def test_invite_code_input_forms(client, db, consent_docs, share_doc, admin_id, parent_id):
+    """소문자 · 하이픈 없음 · 공백 · O/I/L 헷갈림 → 같은 코드"""
+    token = new_token(client, parent_id)
+    compact = token.replace("-", "")
+    confused = compact.replace("0", "O").replace("1", "I")
+
+    new_user(db, client, consent_docs)
+    for typed in (token.lower(), compact, f" {token[:4]} {token[5:]} ", confused):
+        response = preview(client, typed)
+        assert response.status_code == 200, typed
+        assert response.json()["data"]["already_member"] is False
+    assert accept(client, compact.lower()).status_code == 200
 
 
 @pytest.mark.parametrize("body", [

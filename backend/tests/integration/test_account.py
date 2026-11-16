@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.config import settings
-from app.db import auth_admin, storage
+from app.db import auth_admin, kakao_admin, storage
 from app.services import deletion_service
 from tests.integration.conftest import (
     PARENT,
@@ -128,16 +128,41 @@ def open_requests(db, user, request_type):
     )
 
 
+def revoke(client, consent_type, delete_my_records=None):
+    body = None if delete_my_records is None else {"delete_my_records": delete_my_records}
+    return client.post(f"/v1/consents/{consent_type}/revoke", json=body)
+
+
+def test_required_revoke_keeps_records_by_default(client, db, user_id, consent_docs, parent_id):
+    """기록 지우기 안 고름 → 예약 X, 기록 유지, 기능만 중지"""
+    record_id = text_record(client, parent_id)
+
+    for body in (None, False):
+        agree_all(client, consent_docs)
+        revoked = revoke(client, "health", body).json()["data"]
+        assert revoked["deletion_scheduled_for"] is None
+
+    assert open_requests(db, user_id, "consent_withdrawal") == 0
+    assert record_exists(db, record_id)
+    assert client.get("/v1/parents").status_code == 403
+
+
+def test_revoke_body_validation(client, user_id, consent_docs):
+    agree_all(client, consent_docs)
+    response = client.post("/v1/consents/health/revoke", json={"delete_my_records": True, "x": 1})
+    assert response.status_code == 422
+
+
 def test_required_revoke_schedules_deletion(client, db, user_id, consent_docs):
     agree_all(client, consent_docs)
 
-    revoked = client.post("/v1/consents/health/revoke").json()["data"]
+    revoked = revoke(client, "health", True).json()["data"]
     scheduled = parse(revoked["deletion_scheduled_for"])
     expected = datetime.now(timezone.utc) + timedelta(days=deletion_service.GRACE_DAYS)
     assert abs(scheduled - expected) < timedelta(minutes=5)
 
     # 다른 필수 동의도 철회 → 예약 그대로 1건
-    again = client.post("/v1/consents/privacy/revoke").json()["data"]
+    again = revoke(client, "privacy", True).json()["data"]
     assert again["deletion_scheduled_for"] == revoked["deletion_scheduled_for"]
     assert open_requests(db, user_id, "consent_withdrawal") == 1
 
@@ -156,7 +181,7 @@ def test_required_revoke_schedules_deletion(client, db, user_id, consent_docs):
 
 def test_noti_revoke_no_deletion(client, db, user_id, consent_docs):
     agree_all(client, consent_docs, noti=True)
-    revoked = client.post("/v1/consents/noti/revoke").json()["data"]
+    revoked = revoke(client, "noti", True).json()["data"]
     assert revoked["deletion_scheduled_for"] is None
     assert open_requests(db, user_id, "consent_withdrawal") == 0
 
@@ -245,13 +270,19 @@ def test_withdraw(client, db, user_id, three_parents):
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data["status"] == "requested"
+    # 즉시 실행 (예정 = 지금) + 워커 작업 등록
+    assert abs(parse(data["scheduled_for"]) - datetime.now(timezone.utc)) < timedelta(minutes=5)
+    assert sql_scalar(db, "SELECT count(*) FROM jobs WHERE type = 'run_deletions' AND status = 'queued'") >= 1
 
     # 관리자 넘김 → 나감
     assert role_of(db, p["shared"], p["writer"]) == "admin"
     assert role_of(db, p["shared"], user_id) is None
     assert role_of(db, p["other_space"], user_id) is None
-    # 혼자 쓰던 공간: 실행 때까지 관계 유지 (관리자 0명 공간 X)
+    # 혼자 쓰던 공간: 7일 뒤 공간 삭제 예약, 그때까지 관계 유지 (관리자 0명 공간 X)
     assert role_of(db, p["sole"], user_id) == "admin"
+    assert sql_scalar(
+        db, "SELECT status FROM parent_deletions WHERE target_parent_id = :p", p=p["sole"]
+    ) == "scheduled"
 
     assert sql_scalar(
         db, "SELECT count(*) FROM family_invites WHERE invited_by = :u AND revoked_at IS NULL", u=user_id
@@ -260,11 +291,13 @@ def test_withdraw(client, db, user_id, three_parents):
 
     request = run_sql(
         db,
-        "SELECT request_type, parent_ids::text[] FROM deletion_requests WHERE id = :id",
+        "SELECT request_type, parent_ids::text[], delete_records FROM deletion_requests WHERE id = :id",
         id=data["request_id"]
     )[0]
     assert request[0] == "account"
-    assert request[1] == [p["sole"]]
+    # 공간은 parent_deletions 로 따로 / 기본: 기록 유지
+    assert request[1] == []
+    assert request[2] is False
 
     # 다시 요청 → 같은 결과
     again = withdraw(client)
@@ -300,10 +333,10 @@ def test_simple_member_withdraws(client, db, user_id, consent_docs, parent_id):
     assert withdraw(client).status_code == 200
     assert role_of(db, parent_id, writer) is None
 
-    # 남은 기록 (삭제 실행 전) → 다른 가족에게 "탈퇴한 가족"
+    # 남은 기록 → 다른 가족에게 "탈퇴한 사용자"
     client.login(user_id)
     record = client.get(f"/v1/records/{record_id}").json()["data"]
-    assert record["author_name"] == "탈퇴한 가족"
+    assert record["author_name"] == "탈퇴한 사용자"
 
 
 def test_active_account(client, user_id, consent_docs):
@@ -321,9 +354,13 @@ def executor(monkeypatch):
     monkeypatch.setattr(storage, "object_info", fake.info)
     monkeypatch.setattr(storage, "remove_objects", fake.remove)
     monkeypatch.setattr(storage, "list_files", fake.list)
-    monkeypatch.setattr(auth_admin, "delete_user", deleted_auth.append)
+    # 순서 확인용: 카카오 연결 끊기 → 로그인 계정 삭제
+    calls = []
+    monkeypatch.setattr(auth_admin, "delete_user", lambda u: (deleted_auth.append(u), calls.append(("auth", u))))
+    monkeypatch.setattr(kakao_admin, "unlink", lambda k: calls.append(("kakao", k)))
     monkeypatch.setattr(settings, "DELETION_EXECUTE_ENABLED", True)
     fake.deleted_auth = deleted_auth
+    fake.calls = calls
     return fake
 
 
@@ -356,10 +393,18 @@ def test_execution_disabled(client, db, user_id, parent_id, monkeypatch):
     assert request_status(db, user_id, "account") == "requested"
 
 
-def test_not_due_yet(client, db, user_id, parent_id, executor):
-    withdraw(client, delete_sole_parents=True)
+def test_not_due_yet(client, db, user_id, consent_docs, parent_id, executor):
+    """동의 철회 기록 삭제: 7일 전 → 실행 X (탈퇴는 즉시라 해당 없음)"""
+    revoke(client, "health", True)
     assert deletion_service.run(db) == 0
-    assert request_status(db, user_id, "account") == "requested"
+    assert request_status(db, user_id, "consent_withdrawal") == "requested"
+
+
+def test_withdrawal_runs_immediately(client, db, user_id, parent_id, executor):
+    """탈퇴: 예정일 기다리지 않고 바로 실행"""
+    withdraw(client, delete_sole_parents=True)
+    assert deletion_service.run(db) == 1
+    assert request_status(db, user_id, "account") == "completed"
 
 
 def test_execute_account_deletion(client, db, user_id, consent_docs, three_parents, executor):
@@ -374,7 +419,10 @@ def test_execute_account_deletion(client, db, user_id, consent_docs, three_paren
     client.login(user_id)
 
     target = member_id(db, p["shared"], p["writer"])
-    withdraw(client, delete_sole_parents=True, admin_transfers=[{"parent_id": p["shared"], "member_id": target}])
+    withdraw(
+        client, delete_sole_parents=True, delete_my_records=True,
+        admin_transfers=[{"parent_id": p["shared"], "member_id": target}]
+    )
     make_due(db, user_id)
 
     assert deletion_service.run(db) == 1
@@ -384,7 +432,8 @@ def test_execute_account_deletion(client, db, user_id, consent_docs, three_paren
     assert not record_exists(db, in_sole)
     assert record_exists(db, others)
     assert my_voice_path in executor.removed
-    assert sql_scalar(db, "SELECT count(*) FROM parents WHERE id = :p", p=p["sole"]) == 0
+    # 혼자 쓰던 공간: 계정 삭제와 별개 (7일 뒤 공간 삭제)
+    assert sql_scalar(db, "SELECT count(*) FROM parents WHERE id = :p", p=p["sole"]) == 1
     assert sql_scalar(db, "SELECT count(*) FROM parents WHERE id = :p", p=p["shared"]) == 1
     assert sql_scalar(db, "SELECT count(*) FROM audio_uploads WHERE user_id = :u AND record_id IS NOT NULL", u=user_id) == 0
 
@@ -398,9 +447,98 @@ def test_execute_account_deletion(client, db, user_id, consent_docs, three_paren
     assert deletion_service.run(db) == 0
 
 
+def test_execute_keeps_records_by_default(client, db, user_id, consent_docs, parent_id, executor):
+    """기본: 글은 남기고 작성자 '탈퇴한 사용자', 음성 파일만 삭제 (재생 410)"""
+    writer = join_family(db, client, consent_docs, parent_id, "writer")
+    client.login(user_id)
+    mine = text_record(client, parent_id, "내가 쓴 기록")
+    my_voice = new_voice_record(client, executor, parent_id)
+    voice_path = sql_scalar(db, "SELECT audio_path FROM records WHERE id = :id", id=my_voice)
+
+    target = member_id(db, parent_id, writer)
+    withdraw(client, admin_transfers=[{"parent_id": parent_id, "member_id": target}])
+    make_due(db, user_id)
+    assert deletion_service.run(db) == 1
+
+    assert record_exists(db, mine) and record_exists(db, my_voice)
+    assert voice_path in executor.removed
+    assert executor.deleted_auth == [user_id]
+    assert sql_scalar(db, "SELECT display_name IS NULL AND phone IS NULL FROM users WHERE id = :u", u=user_id)
+
+    client.login(writer)
+    text = client.get(f"/v1/records/{mine}").json()["data"]
+    assert text["author_name"] == "탈퇴한 사용자"
+    assert text["current_text"] == "내가 쓴 기록"
+    # 음성 기록: 받아쓰기 전이라 글 없음 (테스트) → 재생만 확인
+    voice = client.get(f"/v1/records/{my_voice}").json()["data"]
+    assert voice["author_name"] == "탈퇴한 사용자"
+    assert voice["audio_available"] is False
+    played = client.get(f"/v1/records/{my_voice}/audio")
+    assert played.status_code == 410
+    assert error_code(played) == "AUDIO_DELETED"
+
+
+def test_withdraw_cancels_consent_deletion(client, db, user_id, consent_docs, parent_id):
+    """철회 때 기록 지우기 예약 → 탈퇴 때 고른 처리로 대체"""
+    revoke(client, "health", True)
+    assert open_requests(db, user_id, "consent_withdrawal") == 1
+
+    assert withdraw(client, delete_sole_parents=True).status_code == 200
+    assert open_requests(db, user_id, "consent_withdrawal") == 0
+
+
+def link_kakao(db, user_id, kakao_id="4012345678"):
+    """Supabase 카카오 로그인 연결 정보 (실제: 카카오 로그인 시 Supabase 가 생성)"""
+    run_sql(
+        db,
+        """
+            INSERT INTO auth.identities (provider_id, user_id, identity_data, provider)
+            VALUES (:k, :u, CAST(:data AS jsonb), 'kakao')
+        """,
+        k=kakao_id, u=user_id, data=f'{{"sub": "{kakao_id}"}}'
+    )
+    return kakao_id
+
+
+def test_execute_unlinks_kakao_before_auth_delete(client, db, user_id, parent_id, executor):
+    kakao_id = link_kakao(db, user_id)
+    withdraw(client, delete_sole_parents=True)
+    make_due(db, user_id)
+
+    assert deletion_service.run(db) == 1
+    assert executor.calls == [("kakao", kakao_id), ("auth", user_id)]
+
+
+def test_execute_no_kakao_for_other_logins(client, db, user_id, parent_id, executor):
+    withdraw(client, delete_sole_parents=True)
+    make_due(db, user_id)
+
+    assert deletion_service.run(db) == 1
+    assert executor.calls == [("auth", user_id)]
+
+
+def test_execution_retries_after_kakao_failure(client, db, user_id, parent_id, executor, monkeypatch):
+    """카카오 실패 → 계정·기록 그대로, approved → 다음 실행에서 다시"""
+    kakao_id = link_kakao(db, user_id)
+    withdraw(client, delete_sole_parents=True)
+    make_due(db, user_id)
+
+    def fail(_):
+        raise kakao_admin.KakaoUnlinkError("down")
+
+    monkeypatch.setattr(kakao_admin, "unlink", fail)
+    assert deletion_service.run(db) == 0
+    assert request_status(db, user_id, "account") == "approved"
+    assert executor.deleted_auth == []
+
+    monkeypatch.setattr(kakao_admin, "unlink", lambda k: executor.calls.append(("kakao", k)))
+    assert deletion_service.run(db) == 1
+    assert executor.calls == [("kakao", kakao_id), ("auth", user_id)]
+
+
 def test_execution_retries_after_storage_failure(client, db, user_id, parent_id, executor):
     voice = new_voice_record(client, executor, parent_id)
-    withdraw(client, delete_sole_parents=True)
+    withdraw(client, delete_sole_parents=True, delete_my_records=True)
     make_due(db, user_id)
 
     executor.fail_remove = True
@@ -422,7 +560,7 @@ def test_execute_consent_withdrawal(client, db, user_id, consent_docs, parent_id
     mine = text_record(client, parent_id)
 
     client.login(writer)
-    client.post("/v1/consents/health/revoke")
+    revoke(client, "health", True)
     make_due(db, writer)
 
     assert deletion_service.run(db) == 1
@@ -435,7 +573,7 @@ def test_execute_consent_withdrawal(client, db, user_id, consent_docs, parent_id
 
 
 def test_approved_request_not_cancelled_by_reagree(client, db, user_id, consent_docs, parent_id, executor):
-    client.post("/v1/consents/health/revoke")
+    revoke(client, "health", True)
     make_due(db, user_id)
     run_sql(db, "UPDATE deletion_requests SET status = 'approved' WHERE requester_id = :u", u=user_id)
 

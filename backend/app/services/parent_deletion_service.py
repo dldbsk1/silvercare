@@ -127,6 +127,20 @@ def request_deletion(db: Session, user_id: str, parent_id: str) -> dict:
     return to_out(db, repo.get_open(db, parent_id), user_id)
 
 
+def schedule_for_withdrawal(db: Session, user_id: str, parent_id: str):
+    """탈퇴: 혼자 쓰던 공간 → 7일 뒤 삭제. 부모님 행 잠금·유일 관리자 확인은 호출한 쪽 (account_service)
+    이미 열린 요청 → 그대로 (pending → 내 동의 추가, 관리자 나뿐이라 바로 scheduled)"""
+    repo.expire_overdue(db, parent_id)
+    request = repo.get_open(db, parent_id, for_update=True)
+    if request is None:
+        request = repo.insert(db, parent_id, user_id, APPROVAL_DAYS)
+        invite_repo.revoke_all(db, parent_id)
+    if request["status"] == "pending":
+        if user_id not in repo.approver_ids(db, str(request["id"])):
+            repo.add_approval(db, str(request["id"]), user_id)
+        schedule_if_all_approved(db, request)
+
+
 def approve(db: Session, user_id: str, parent_id: str) -> dict:
     lock_as_admin(db, parent_id, user_id)
     repo.expire_overdue(db, parent_id)

@@ -7,6 +7,15 @@ from pydantic import BaseModel, Field, field_validator
 ConsentType = Literal["service", "privacy", "health", "noti"]
 
 
+class ConsentRevokeIn(BaseModel):
+    """필수 동의 철회 선택. 본문 없음 = 기본값"""
+
+    # 내가 쓴 기록도 모두 지우기 (7일 뒤, 그 전에 다시 동의하면 취소). false → 기록 유지
+    delete_my_records: bool = False
+
+    model_config = {"extra": "forbid"}
+
+
 class ConsentDocumentOut(BaseModel):
     type: ConsentType
     required: bool

@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # 허용 범위: app/ai/provider.py ALLOWED_MODES
     AI_PROVIDER: str | None = None
 
+    # AI_PROVIDER=real (Gemini). 모델명은 바뀌므로 .env에서 교체. 무료 등급은 실사용자 데이터 금지
+    GEMINI_API_KEY: str | None = None
+    GEMINI_MODEL: str = "gemini-3.1-flash-lite"
+
     # 목록 커서 서명 키 (HMAC). 미설정 → local·test: 개발용 고정값, staging·production: 시작 중단
     CURSOR_SECRET: str | None = None
 

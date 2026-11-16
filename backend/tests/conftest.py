@@ -2,3 +2,4 @@
 import os
 
 os.environ["ENV"] = "test"
+os.environ["AI_PROVIDER"] = "mock"  # .env의 real(실제 Gemini 호출)이 테스트에 섞이지 않게

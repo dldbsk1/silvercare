@@ -10,7 +10,7 @@ from app.core.errors import register_exception_handlers
 from app.core.security import AuthUser, get_auth_user
 from app.db.session import get_db
 from app.core.errors import AppError
-from app.repositories import family_repo, user_repo
+from app.repositories import parent_deletion_repo, family_repo, user_repo
 from app.services import consent_service
 
 
@@ -54,6 +54,7 @@ def client(monkeypatch):
         lambda db, user_id, provider, phone: created.append(user_id)
     )
     monkeypatch.setattr(consent_service, "ensure_completed", lambda db, user_id: None)
+    monkeypatch.setattr(parent_deletion_repo, "get_open_status", lambda *args: None)
     client = TestClient(build_app())
     client.created_users = created
     return client

@@ -12,6 +12,7 @@ def configure(monkeypatch):
     def set_config(env, ai_provider):
         monkeypatch.setattr(settings, "ENV", env)
         monkeypatch.setattr(settings, "AI_PROVIDER", ai_provider)
+        monkeypatch.setattr(settings, "GEMINI_API_KEY", None)  # .env 값과 무관하게
     return set_config
 
 
@@ -54,3 +55,13 @@ def test_stt_configured(configure):
 
     configure("local", "stub")
     assert provider.stt_configured() is False
+
+
+def test_real_needs_key(configure, monkeypatch):
+    configure("production", "real")
+    with pytest.raises(RuntimeError):
+        provider.check_ai_config()
+
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "k")
+    provider.check_ai_config()
+    assert provider.ai_mode() == "real"

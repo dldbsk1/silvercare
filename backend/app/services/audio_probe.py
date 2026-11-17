@@ -75,6 +75,8 @@ def probe(data: bytes, declared_mime: str) -> AudioInfo:
         )
 
     seconds = getattr(parsed.info, "length", None)
+    if (not seconds or seconds <= 0) and mime == "audio/mp4":
+        seconds = mp4_duration(data)
     if not seconds or seconds <= 0:
         raise AudioProblem("AUDIO_UNREADABLE", "길이 정보 없음")
 
@@ -87,3 +89,70 @@ def probe(data: bytes, declared_mime: str) -> AudioInfo:
         )
 
     return AudioInfo(mime=mime, seconds=seconds)
+
+
+# ── MP4 길이 직접 읽기 (mutagen 실패 대비) ──
+# 삼성 녹음 앱: moov 안 trak 앞에 QuickTime식 meta (version·flags 없음)
+# → mutagen 1.47이 meta 잘못 읽고 trak 못 찾음 → 길이 0
+
+def iter_boxes(data: bytes, start: int, end: int):
+    """(종류, 내용 시작, 상자 끝). 크기 이상 → 중단"""
+    i = start
+    while i + 8 <= end:
+        size = int.from_bytes(data[i:i + 4], "big")
+        kind = data[i + 4:i + 8]
+        header = 8
+        if size == 1:
+            if i + 16 > end:
+                return
+            size = int.from_bytes(data[i + 8:i + 16], "big")
+            header = 16
+        elif size == 0:
+            size = end - i
+        if size < header or i + size > end:
+            return
+        yield kind, i + header, i + size
+        i += size
+
+
+def child(data: bytes, start: int, end: int, kind: bytes):
+    for k, s, e in iter_boxes(data, start, end):
+        if k == kind:
+            return s, e
+    return None
+
+
+def mdhd_seconds(data: bytes, start: int, end: int) -> float | None:
+    """mvhd·mdhd 공통: version 0 → 32비트 길이 / 1 → 64비트"""
+    version = data[start] if start < end else None
+    if version == 0 and start + 20 <= end:
+        unit = int.from_bytes(data[start + 12:start + 16], "big")
+        length = int.from_bytes(data[start + 16:start + 20], "big")
+    elif version == 1 and start + 32 <= end:
+        unit = int.from_bytes(data[start + 20:start + 24], "big")
+        length = int.from_bytes(data[start + 24:start + 32], "big")
+    else:
+        return None
+    return length / unit if unit else None
+
+
+def mp4_duration(data: bytes) -> float | None:
+    """음성 트랙(soun) mdhd 길이. 없으면 mvhd. 못 읽음 → None"""
+    moov = child(data, 0, len(data), b"moov")
+    if moov is None:
+        return None
+
+    for kind, s, e in iter_boxes(data, *moov):
+        if kind != b"trak":
+            continue
+        mdia = child(data, s, e, b"mdia")
+        if mdia is None:
+            continue
+        hdlr = child(data, *mdia, b"hdlr")
+        mdhd = child(data, *mdia, b"mdhd")
+        # hdlr: version·flags(4) + pre_defined(4) + 종류(4)
+        if hdlr and mdhd and data[hdlr[0] + 8:hdlr[0] + 12] == b"soun":
+            return mdhd_seconds(data, *mdhd)
+
+    mvhd = child(data, *moov, b"mvhd")
+    return mdhd_seconds(data, *mvhd) if mvhd else None

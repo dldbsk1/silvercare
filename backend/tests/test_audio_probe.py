@@ -2,7 +2,7 @@
 import pytest
 
 from app.services import audio_probe
-from tests.audio_samples import make_wav
+from tests.audio_samples import make_android_m4a, make_wav
 
 
 @pytest.mark.parametrize("seconds, stored", [
@@ -50,6 +50,21 @@ def test_disallowed_format():
         audio_probe.probe(flac, "audio/mp4")
 
     assert e.value.code in ("AUDIO_FORMAT_MISMATCH", "AUDIO_UNREADABLE")
+
+
+def test_android_m4a_with_meta_before_track():
+    # 안드로이드 녹음: mutagen은 trak 못 찾아 길이 0 → 직접 읽기
+    info = audio_probe.probe(make_android_m4a(2.856), "audio/mp4")
+
+    assert info.mime == "audio/mp4"
+    assert info.duration_seconds == 3
+
+
+def test_android_m4a_too_short():
+    with pytest.raises(audio_probe.AudioProblem) as e:
+        audio_probe.probe(make_android_m4a(1.0), "audio/mp4")
+
+    assert e.value.code == "AUDIO_DURATION_OUT_OF_RANGE"
 
 
 def test_declared_mime_mismatch_within_allowed_passes():

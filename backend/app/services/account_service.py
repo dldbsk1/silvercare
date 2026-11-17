@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.repositories import family_repo, invite_repo, notification_repo, parent_repo, user_repo
 from app.schemas.account import WithdrawalIn
-from app.services import deletion_service, parent_deletion_service
+from app.services import checklist_service, deletion_service, parent_deletion_service
 
 
 def lock_active_user(db: Session, user_id: str):
@@ -111,6 +111,7 @@ def withdraw(db: Session, user_id: str, body: WithdrawalIn) -> dict:
         else:
             family_repo.delete_member(db, state["my_member_id"])
 
+    checklist_service.cancel_open(db, user_id)
     notification_repo.revoke_all_devices(db, user_id)
     user_repo.mark_withdrawn(db, user_id)
 

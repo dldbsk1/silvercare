@@ -5,7 +5,7 @@
 """
 from sqlalchemy.orm import Session
 
-from app.repositories import parent_repo, record_repo
+from app.repositories import checklist_repo, parent_repo, record_repo
 from app.services import dday, record_service
 from app.repositories.record_repo import RecordFilter
 from app.services.access import ParentAccess
@@ -34,4 +34,7 @@ def get_home(db: Session, access: ParentAccess) -> dict:
         "recent_records": [
             record_service.to_list_item(record, access.user_id) for record in records
         ],
+        "received_checklists_open": checklist_repo.count_open_received(
+            db, access.parent_id, access.user_id
+        ),
     }

@@ -93,7 +93,13 @@ final recordsChanged = ValueNotifier<int>(0);
 
 /// 홈 묶음 (GET /v1/parents/{id}/home)
 class HomeData {
-  HomeData({required this.parentId, required this.nickname, required this.dday, required this.recentRecords});
+  HomeData({
+    required this.parentId,
+    required this.nickname,
+    required this.dday,
+    required this.recentRecords,
+    this.receivedChecklists = 0,
+  });
 
   factory HomeData.fromJson(Map<String, dynamic> json) => HomeData(
         parentId: json['parent']['id'] as String,
@@ -102,12 +108,16 @@ class HomeData {
         recentRecords: (json['recent_records'] as List)
             .map((e) => RecordSummary.fromJson(e as Map<String, dynamic>))
             .toList(),
+        receivedChecklists: json['received_checklists_open'] as int? ?? 0,
       );
 
   final String parentId;
   final String nickname;
   final Dday dday;
   final List<RecordSummary> recentRecords;
+
+  /// 받은 관찰 체크리스트 중 대기 수 → 홈 카드
+  final int receivedChecklists;
 }
 
 /// 처리 상태 (GET /v1/records/{id}/processing)

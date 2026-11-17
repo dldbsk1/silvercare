@@ -185,7 +185,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     }
   }
 
-  bool _canClassify(RecordDetail r) => r.isMine && r.stage != 'transcription';
+  bool _canClassify(RecordDetail r) => r.isMine && r.stage != 'transcription' && !r.isChecklist;
   bool _canEdit(RecordDetail r) => r.isMine && r.stage != 'transcription';
 
   // ── 동작 ──

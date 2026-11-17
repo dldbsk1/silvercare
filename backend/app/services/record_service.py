@@ -363,6 +363,7 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
     - 글만 변경 + AI 분류 기록 → 이전 분류 삭제 + 새 버전 분류 작업 등록
     - 글만 변경 + 사용자 분류 기록 → 사용자 분류 유지
     - 증상 기록 글 → 증상 수정으로만 (글 = 증상·시간대·횟수에서 만듦)
+    - 체크리스트 기록 분류 → 고정 (질문한 항목 = 분류). 같은 값 재전송은 허용
     """
     sent = check_patch(body, IMMUTABLE_FIELDS, nullable={"occurred_at"})
     sent.discard("base_version")
@@ -393,6 +394,12 @@ def update(db: Session, user_id: str, record_id: str, body: RecordUpdateIn) -> d
 
     new_codes = None
     if "item_codes" in sent:
+        if record["input_type"] == "checklist" and set(body.item_codes) != {
+            i["item_code"] for i in record_repo.get_items(db, record_id)
+        }:
+            raise AppError(
+                409, "CHECKLIST_ITEM_FIXED", "체크리스트 기록은 질문한 항목으로 분류돼요."
+            )
         unknown = set(body.item_codes) - survey_repo.existing_codes(db, body.item_codes)
         if unknown:
             raise AppError(

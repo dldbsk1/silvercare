@@ -146,6 +146,9 @@ class RecordDetail {
   bool get failed => processingStatus == 'failed';
   bool get excluded => status == 'excluded';
   bool get isVoice => inputType == 'voice';
+
+  /// 관찰 체크리스트 답 → 분류 고정 (질문한 항목)
+  bool get isChecklist => inputType == 'checklist';
   bool get isSymptom => symptom != null;
 
   /// 받아쓰기 실패 (글 없음 → 고치기 X)

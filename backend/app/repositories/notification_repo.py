@@ -1,3 +1,5 @@
+import json
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -64,3 +66,18 @@ def revoke_all_devices(db: Session, user_id: str):
         {"u": user_id}
     )
 
+
+
+def insert_notification(
+    db: Session, user_id: str, parent_id: str | None, type_: str, title: str,
+    body: str | None, payload: dict | None
+):
+    """앱 안 알림 저장. 푸시 발송은 B단계 (sent_at)"""
+    db.execute(
+        text("""
+            INSERT INTO notifications (user_id, parent_id, type, title, body, payload)
+            VALUES (:u, :p, :t, :title, :body, CAST(:payload AS jsonb))
+        """),
+        {"u": user_id, "p": parent_id, "t": type_, "title": title, "body": body,
+         "payload": json.dumps(payload) if payload is not None else None}
+    )

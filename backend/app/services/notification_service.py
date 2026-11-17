@@ -46,3 +46,18 @@ def revoke_device(db: Session, user_id: str, device_id: str):
     """내 기기 아님 → 404. 이미 끔 → 그대로"""
     if not notification_repo.revoke_device(db, user_id, device_id):
         raise AppError(404, "NOT_FOUND", "기기를 찾을 수 없어요.")
+
+
+# ── 알림 저장 (설정 꺼짐 → 저장 X) ──
+
+TASKS = "tasks_enabled"
+
+
+def notify(
+    db: Session, user_id: str, parent_id: str | None, type_: str, title: str,
+    body: str | None = None, payload: dict | None = None, setting: str = TASKS
+):
+    row = notification_repo.get_settings(db, user_id)
+    enabled = row[setting] if row else DEFAULT_SETTINGS[setting]
+    if enabled:
+        notification_repo.insert_notification(db, user_id, parent_id, type_, title, body, payload)

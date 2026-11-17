@@ -347,35 +347,198 @@
 
 ## 6. 가족 관찰 체크리스트 — A-TASK-001~005
 
-**테이블:** `checklists`(묶음), `tasks`(항목), `record_items`, `records`. 체크리스트 수신·제출 권한은 해당 가족의 `writer/admin`.
+**목적:** 기록이 없거나 부족한 조사 항목을 가족에게 "이것 좀 봐 주세요"로 부탁하고, 답을 기록으로 남긴다. 점수·등급 없음 (POL-03), 서버가 정한 항목·문구만 (자유 질문 X).
 
-| Method | Endpoint | 우선 | 기능 |
+**화면:** SCR_A_310 관찰 체크리스트 (가족 탭 안) — 보내기 / 받은 체크리스트 탭, 한 항목씩 답하기, 모두 답했어요 확인, 보낸 체크리스트 상세. 항목 이름은 실제 조사표(`survey_items.label`).
+
+**테이블:** `checklists`(묶음), `tasks`(항목), `survey_items`(설명 문구), `records`·`record_items`(보낼 때 생성), `notifications`. 마이그레이션 `011_checklists.sql` (아래 6.6).
+
+| Method | Endpoint | 우선 | 기능 | 화면 |
+| --- | --- | --- | --- | --- |
+| GET | `/v1/parents/{parent_id}/checklists/draft` | P1 | 고르기 목록 42개 (영역별·설명·마지막 기록) + 추천 항목 | 보내기 탭 |
+| POST | `/v1/parents/{parent_id}/checklists` | P1 | 항목·받을 사람·확인 날짜로 보내기 | 체크리스트 보내기 · N개 항목 |
+| GET | `/v1/parents/{parent_id}/checklists` | P1 | 받은/보낸 목록·진행 n/m | 보낸 체크리스트 · 받은 체크리스트 탭 |
+| GET | `/v1/checklists/{checklist_id}` | P1 | 항목·답·메모 | 답하기 · 보낸 체크리스트 상세 |
+| PUT | `/v1/checklists/{checklist_id}/items/{task_id}/answer` | P1 | 항목 하나 답하기 (보내기 전까지 고치기 가능) | 답하기 [다음] |
+| POST | `/v1/checklists/{checklist_id}/submit` | P1 | 답 보내기 → 답마다 기록 1건 + 보낸 사람 알림 | 모두 답했어요 [보내기] |
+
+### 6.1 권한·규칙
+
+| 구분 | 규칙 |
+| --- | --- |
+| 보내기 | 그 부모님 공간의 `writer`·`admin` |
+| 받을 사람 | 같은 공간의 `writer`·`admin` (나 자신 포함). `viewer` → 400 `RECIPIENT_NOT_WRITER` |
+| 조회 | 보낸 사람·받은 사람만. 그 외 → 404 `CHECKLIST_NOT_FOUND` (존재 숨김) |
+| 보낸 사람이 보는 답 | 받은 사람이 보내기 전에도 지금까지 답·메모 보임 (화면 "3/4 진행 · 대기") |
+| 답·보내기 | 받은 사람만 → 그 외 403 `NOT_RECIPIENT` |
+| 항목 | `survey_items.family_checklist = true` 42개 (신체·인지·행동변화·간호처치). **재활 10개 제외**. 1~10개, 중복 X |
+| 확인 날짜 `due_date` | 오늘(KST) ~ 30일 뒤 |
+| 공간 삭제 예약 중 | 보내기·답·제출 → 409 `PARENT_DELETION_SCHEDULED` (조회 가능) |
+| 확인 날짜 지남 | 답·제출 가능 (늦어도 받음) |
+| 취소 | 사용자 취소 기능 없음 (디자인 없음). 받은·보낸 사람이 가족을 나가거나 탈퇴 → 열린 체크리스트 자동 취소 |
+
+**상태 `status`** (저장 X, 계산) — 화면 표시는 `submitted` → **완료**, `cancelled` → **취소됨**, 나머지 → **대기**
+
+| 값 | 조건 |
+| --- | --- |
+| `pending` | 답 0개 |
+| `in_progress` | 답 1개 이상, 미제출 |
+| `overdue` | 미제출 + `due_date` < 오늘 |
+| `submitted` | `submitted_at` 있음 |
+| `cancelled` | `cancelled_at` 있음 (나가기·탈퇴) |
+
+### 6.2 답 종류 — 조사표 척도별
+
+| `scale` (항목 수) | 답 → 화면 문구 |
+| --- | --- |
+| `adl` (신체 12) | `alone` 혼자 하심 · `little` 조금 도와드림 · `full` 다 도와드림 · `not_seen` 못 봤어요 |
+| `yesno` (인지 7 · 행동변화 14 · 간호처치 9) | `yes` 있었어요 · `no` 없었어요 · `not_seen` 못 봤어요 |
+
+- 척도에 안 맞는 답 → 422 `INVALID_ANSWER`
+- `yes`·`no`는 `task_answer_enum`에 새로 추가 (6.6)
+- `note` = "한 줄 덧붙이기", 선택, 200자. `not_seen`에도 가능
+- 답은 **관찰 사실**만. 점수·등급·판정 문구로 바꾸지 않음
+
+### 6.3 기록 생성 — [보내기] 때 한 번에
+
+- 답하기(PUT)는 `tasks`에만 저장. **기록은 제출(submit) 때** 한 트랜잭션으로 생성
+  - 이유: 보내기 전 답 바꾸기·"못 봤어요"로 바꾸기 → 이미 만든 기록 삭제 필요 (기록 삭제 X 원칙과 충돌)
+- `not_seen` 제외, 답마다 `records` 1건 ("못 봤어요로 답한 항목은 기록으로 저장하지 않고, 다음에 다시 물어봐요")
+
+| 컬럼 | 값 |
+| --- | --- |
+| `input_type` | `checklist` |
+| `source` | `direct` |
+| `author_id` | 받은 사람 (답한 사람) |
+| `occurred_at` | 그 항목 답한 시각 (`tasks.done_at`) |
+| `original_text`·`current_text` | `"{항목명} — {답 문구}"` + 메모 있으면 `". {메모}"`<br>예: `화장실 사용하기 — 조금 도와드림. 밤에는 부축이 필요해요` / `길을 잃음 — 없었어요` |
+| `processing_status` | `completed` (받아쓰기·AI 분류 없음) |
+| 분류 | `record_items` 1건 = 그 항목, `set_by=user` · `classified_by=user` |
+
+- `tasks.answer_record_id` = 만든 기록
+- 제출 뒤: 체크리스트 답 고치기 X. 기록은 기록 상세에서 글·출처·날짜 수정·제외 가능 (작성자 = 답한 사람), **분류 변경은 409 `CHECKLIST_ITEM_FIXED`** (질문한 항목 = 분류)
+- 같은 제출 다시 요청 → 기록 다시 만들지 않고 같은 응답 (멱등)
+
+### 6.4 알림 (`notifications` 저장, 푸시 발송은 FCM 연동 후)
+
+| 시점 | 받는 사람 | `type` | 문구 (예) |
 | --- | --- | --- | --- |
-| GET | `/v1/parents/{parent_id}/checklists/suggestions` | P1 | W-DASH의 부족 항목 최대 6개 추천 |
-| POST | `/v1/parents/{parent_id}/checklists` | P1 | 항목 선택·담당자·기한·발송 |
-| GET | `/v1/parents/{parent_id}/checklists` | P1 | 보낸/받은 목록·진행 n/m |
-| GET | `/v1/checklists/{checklist_id}` | P1 | 항목·관찰 질문·답변 조회 |
-| PUT | `/v1/checklists/{checklist_id}/items/{task_id}/answer` | P1 | 개별 항목 답 및 기록 생성 |
-| POST | `/v1/checklists/{checklist_id}/submit` | P1 | 전체 항목 응답 완료 확인·발신자 알림 |
+| 보내기 | 받은 사람 (나 자신이면 X) | `checklist_received` | 형이 엄마 관찰 체크리스트를 보냈어요 (4개, 11/5까지) |
+| 제출 | 보낸 사람 (나 자신이면 X) | `checklist_submitted` | 동생이 체크리스트에 모두 답했어요 |
+| 자동 취소 (나가기·탈퇴) | 상대방 | `checklist_cancelled` | 체크리스트가 취소됐어요 |
+| 확인 날짜 다음 날 10:00 | 받은 사람 (미제출) | `checklist_overdue` | 정기 작업 추가 후 (todo 0단계 정기 작업) |
 
-**POST `/v1/parents/{parent_id}/checklists`**
+- 받는 사람 `notification_settings.tasks_enabled = false` → 알림 저장 X
 
+### 6.5 API
+
+**GET `/v1/parents/{parent_id}/checklists/draft`** — 보내기 탭 (writer·admin)
+
+- `items`: 42개 전부, 영역 → 조사표 순서
+  - `hint`: 짧은 설명 (`survey_items.observation_hint`, 예 "혼자 화장실에 가시는지")
+  - `last_recorded_on`: 그 항목 가장 최근 기록 날짜 (KST, 없으면 null) — "마지막 기록 9/20"
+- `suggested_codes`: 기록이 부족한 항목 최대 6개 ("기록이 부족한 N개 항목으로 만들었어요" → [이대로 쓰기])
+  - 순서: ① 최근 30일 기록 0건 → ② 최근 30일 기록 날짜 1일 → ③ 지난 체크리스트 "못 봤어요" (60일 이내). 같은 순위는 조사표 순서
+  - 열린(대기) 체크리스트에 이미 들어 있는 항목 제외
+  - 기록이 아예 없는 새 공간 → 영역을 섞어 6개 (신체 2 · 인지 2 · 행동변화 2)
+  - 부족한 항목 없음 → `[]` (안내 카드 숨김)
+- 기록 수: `status=normal` + `processing_status=completed` 기록의 `record_items` 기준 (근거 현황판과 같은 기준)
+
+**200**
 ```
-{"item_codes":["phys_toilet_use","phys_eating"],"to_user_id":"550e8400-e29b-41d4-a716-446655440000","due_date":"2026-10-28"}
+{"data":{
+  "suggested_codes":["phys_toilet_use","phys_eating","beh_wandering","cog_date_disorient"],
+  "areas":[
+    {"area":"physical","label":"신체","items":[
+      {"item_code":"phys_toilet_use","label":"화장실 사용하기","hint":"혼자 화장실에 가시는지",
+       "scale":"adl","last_recorded_on":"2026-09-20","reason":"no_records"},
+      {"item_code":"phys_dressing","label":"옷 벗고 입기","hint":"옷을 혼자 벗고 입으시는지",
+       "scale":"adl","last_recorded_on":"2026-11-15","reason":null}
+    ]},
+    {"area":"cognitive","label":"인지","items":[…]},
+    {"area":"behavior","label":"행동변화","items":[…]},
+    {"area":"nursing","label":"간호처치","items":[…]}
+  ]}}
 ```
+- `reason`: `no_records` · `few_records` · `not_seen_before` · null (추천 아님)
 
-**201** `{"data":{"id":"550e8400-e29b-41d4-a716-446655440040","total_items":2,"answered_items":0,"status":"pending"}}`
+**POST `/v1/parents/{parent_id}/checklists`** · `Idempotency-Key` 헤더 (두 번 눌러도 1개)
+```
+{"to_user_id":"550e8400-e29b-41d4-a716-446655440000","item_codes":["phys_toilet_use","phys_eating"],"due_date":"2026-11-05"}
+```
+**201** — 상세와 같은 모양 (아래 GET)
+
+오류: 400 `RECIPIENT_NOT_WRITER` (viewer·가족 아님) · 422 `ITEM_NOT_ALLOWED` (재활·없는 코드·중복·0개·11개 이상) · 422 `INVALID_DUE_DATE`
+
+**GET `/v1/parents/{parent_id}/checklists?box=received|sent&state=open|done|all`**
+- 보내기 탭 아래 "보낸 체크리스트": `box=sent&state=all` (대기 → 완료 순)
+- 받은 체크리스트 탭: `box=received&state=open`, 탭 숫자 = `meta.total`
+- 정렬: 열린 것 `due_date` 빠른 순 → 닫힌 것 최근 순. 최대 50개, 커서 없음 (`meta.next_cursor` 항상 null, 넘치면 `has_more`)
+
+**200**
+```
+{"data":[{"id":"…","from_user":{"id":"…","name":"동생","is_me":false},"to_user":{"id":"…","name":"나","is_me":true},
+  "due_date":"2026-11-18","status":"in_progress","answered_items":1,"total_items":4,
+  "created_at":"2026-11-17T10:00:00+09:00","submitted_at":null}],
+ "meta":{"next_cursor":null,"has_more":false,"total":1}}
+```
+- 카드 문구: 받은 → "동생이 보냈어요 · 내일까지 · 항목 4개 · 1/4" / 보낸 → "형 · 11/5 · 3/4 진행 · 대기"
+
+**GET `/v1/checklists/{checklist_id}`**
+
+**200**
+```
+{"data":{"id":"…","parent_id":"…","from_user":{…},"to_user":{…},"is_recipient":true,
+  "due_date":"2026-11-05","status":"in_progress","answered_items":1,"total_items":2,
+  "items":[
+    {"task_id":"…","item_code":"phys_toilet_use","label":"화장실 사용하기","area":"physical","scale":"adl",
+     "hint":"혼자 화장실에 가시는지","choices":["alone","little","full","not_seen"],
+     "answer":"little","note":"밤에는 부축이 필요해요","answered_at":"…","record_id":null},
+    {"task_id":"…","item_code":"beh_wandering","label":"길을 잃음","area":"behavior","scale":"yesno",
+     "hint":"익숙한 곳에서 길을 잃으신 적 있는지","choices":["yes","no","not_seen"],
+     "answer":null,"note":null,"answered_at":null,"record_id":null}
+  ],
+  "created_at":"…","submitted_at":null,"cancelled_at":null}}
+```
+- `hint`: 보낼 때 `survey_items.observation_hint`를 `tasks.question`에 복사 (나중에 문구 바뀌어도 보낸 그대로)
+- `items` 순서 = 답하기 순서 (영역 → 조사표 순서)
+- `record_id`: 제출 뒤 생성된 기록 (못 봤어요 → null)
+- 보낸 사람 화면: 답 없음 → "답 안 함"
 
 **PUT `/v1/checklists/{checklist_id}/items/{task_id}/answer`**
-
 ```
-{"answer":"little","note":"뒤처리는 도와드려야 함"}
+{"answer":"little","note":"밤에는 부축이 필요해요"}
 ```
+**200** — 그 항목 (`items[]` 한 개와 같은 모양) + `answered_items`
+- 같은 내용 다시 보냄 → 그대로 200. 다른 답 → 덮어씀 (제출 전)
+- 오류: 403 `NOT_RECIPIENT` · 409 `CHECKLIST_SUBMITTED` · 409 `CHECKLIST_CANCELLED` · 422 `INVALID_ANSWER` · 404 (`task_id`가 이 체크리스트 것 아님)
 
-- DB `task_answer_enum`: `alone | little | full | not_seen`에 맞춘다. 기존 API v0.4의 `self/a_little/a_lot`는 변경.
-- `not_seen`은 **체크리스트 응답으로만 저장**, `records`는 생성하지 않고 다음 추천에 재포함.
-- 나머지는 항목당 `records` 1건(`input_type=checklist`, `source=direct`, 작성자는 응답자) 생성. 같은 항목 재전송으로 중복 기록이 생기지 않게 멱등성 및 최종 답변 정책 적용.
-- 질문은 `survey_items`별 서버 지정 관찰 문구로 내려주며 자유 질문 생성은 허용하지 않는다(기능명세).
+**POST `/v1/checklists/{checklist_id}/submit`**
+
+**200** — 상세와 같은 모양 (`status=submitted`, `record_id` 채워짐)
+- 답 안 한 항목 있음 → 409 `INCOMPLETE_ANSWERS` `details.task_ids`
+- 이미 제출 → 200 같은 응답 / 취소됨 → 409 `CHECKLIST_CANCELLED`
+
+### 6.6 DB 변경 — `011_checklists.sql`
+
+| 대상 | 변경 |
+| --- | --- |
+| `task_answer_enum` | `yes`, `no` 추가 |
+| `survey_items` | `observation_hint text` 추가 + 42항목 짧은 설명 (`family_checklist`면 필수) |
+| `checklists` | `cancelled_at timestamptz` 추가 (자동 취소용), CHECK (제출·취소 둘 다 X) |
+| `tasks` | `note text` (CHECK 200자) 추가, unique(`checklist_id`, `item_code`), index(`checklist_id`) |
+| `checklists` index | (`parent_id`, `to_user_id`), (`parent_id`, `from_user_id`) |
+
+**함께 처리**
+- 가족 나가기·내보내기 / 탈퇴: 그 사람이 보낸·받은 열린 체크리스트 자동 취소 + 상대방 알림. 이름은 기록처럼 `'탈퇴한 사용자'`
+- 공간 삭제: `parent_id` cascade로 함께 삭제
+- 홈: 받은 열린 체크리스트 수 (`received_checklists_open`)
+
+### 6.7 정해야 할 것
+
+- [ ] 설명 문구 42개 확정 (초안은 마이그레이션, 문구는 DB라 배포 없이 수정 가능)
+- [ ] 대·소변 조절(신체, adl 척도) 답 "혼자 하심 / 조금 도와드림 / 다 도와드림"이 어색함 → 그대로 vs 항목별 문구
+- [ ] 추천 기준 "부족 = 최근 30일 1일" — 근거 현황판 기준과 함께 확정
 
 ---
 

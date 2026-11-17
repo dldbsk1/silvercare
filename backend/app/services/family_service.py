@@ -21,7 +21,7 @@ from app.core.config import settings
 from app.core.errors import AppError
 from app.repositories import family_repo, invite_repo, parent_repo
 from app.schemas.family import AdminTransferIn, InviteAcceptIn, InviteCreateIn, RoleUpdateIn
-from app.services import account_service, consent_service, parent_deletion_service
+from app.services import account_service, checklist_service, consent_service, parent_deletion_service
 from app.services.access import ParentAccess, get_parent_access
 
 
@@ -314,6 +314,7 @@ def remove_member(db: Session, user_id: str, member_id: str):
         ensure_other_admin(db, parent_id)
 
     invite_repo.revoke_created_by(db, parent_id, str(member["user_id"]))
+    checklist_service.cancel_open(db, str(member["user_id"]), parent_id)
     family_repo.delete_member(db, member_id)
 
 

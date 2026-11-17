@@ -24,3 +24,5 @@ class HomeOut(BaseModel):
     dday: DdayOut
     # 정상 기록 최신 3건 (처리 중·실패 포함, 제외 기록 X). recorded_at DESC, id DESC
     recent_records: list[RecordListItemOut]
+    # 받은 관찰 체크리스트 중 대기 (미제출·미취소) 수 → 홈 카드
+    received_checklists_open: int = 0

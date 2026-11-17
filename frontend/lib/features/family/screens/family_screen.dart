@@ -5,6 +5,8 @@ import 'package:share_plus/share_plus.dart';
 import '../../../app/theme.dart';
 import '../../../core/api/api_exception.dart';
 import '../../../core/auth/auth_api.dart';
+import '../../checklists/checklist_api.dart';
+import '../../checklists/screens/checklist_screen.dart';
 import '../../home/home_api.dart';
 import '../../records/records_api.dart';
 import '../family_api.dart';
@@ -23,13 +25,14 @@ Future<void> _systemShare(String text) =>
 /// - 관리자만: 가족 초대하기 · 초대 다시 보내기
 /// - 구성원 누름 → 구성원 정보 (권한·내보내기·관리자 넘기기)
 class FamilyScreen extends StatefulWidget {
-  const FamilyScreen({super.key, this.familyApi, this.authApi, this.recordsApi, this.share});
+  const FamilyScreen({super.key, this.familyApi, this.authApi, this.recordsApi, this.share, this.checklistApi});
 
   /// 테스트용 교체
   final FamilyApi? familyApi;
   final AuthApi? authApi;
   final RecordsApi? recordsApi;
   final ShareInvite? share;
+  final ChecklistApi? checklistApi;
 
   @override
   State<FamilyScreen> createState() => _FamilyScreenState();
@@ -214,6 +217,16 @@ class _FamilyScreenState extends State<FamilyScreen> {
     if (changed == true) _load();
   }
 
+  // ── 관찰 체크리스트 (SCR_A_310) ──
+
+  Future<void> _openChecklists() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChecklistScreen(parentId: _parentId!, api: widget.checklistApi, familyApi: _api),
+      ),
+    );
+  }
+
   // ── 화면 ──
 
   @override
@@ -310,7 +323,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
         ],
         const SizedBox(height: 12),
         FilledButton(
-          onPressed: () => _toast('체크리스트 보내기는 준비 중이에요.'),
+          onPressed: _parentId == null ? null : _openChecklists,
           style: FilledButton.styleFrom(
             backgroundColor: AppColors.primaryGlow,
             foregroundColor: Colors.white,

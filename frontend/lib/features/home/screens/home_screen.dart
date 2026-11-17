@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import '../../../app/theme.dart';
 import '../../../core/api/api_exception.dart';
 import '../../../core/auth/auth_api.dart';
+import '../../checklists/checklist_api.dart';
+import '../../checklists/screens/checklist_screen.dart';
 import '../../records/record_api.dart';
 import '../../records/screens/record_detail_screen.dart';
 import '../../records/widgets/record_card.dart';
@@ -27,10 +29,11 @@ import '../voice_recorder.dart';
 /// 처리 대기: 2초마다 확인, 60초 넘으면 중단 + 기록함 안내
 /// TODO(B단계): 오늘 컨디션, 받은 체크리스트, 알림 개수
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, this.homeApi, this.authApi, this.recorder, this.recordApi});
+  const HomeScreen({super.key, this.homeApi, this.authApi, this.recorder, this.recordApi, this.checklistApi});
 
   /// 테스트용 교체
   final HomeApi? homeApi;
+  final ChecklistApi? checklistApi;
   final AuthApi? authApi;
   final VoiceRecorder? recorder;
   final RecordApi? recordApi;
@@ -109,6 +112,16 @@ class _HomeScreenState extends State<HomeScreen> {
     } on ApiException catch (e) {
       if (mounted) setState(() => _loadError = e.message);
     }
+  }
+
+  /// 받은 관찰 체크리스트 (가족 탭 안 화면, 받은 탭)
+  Future<void> _openChecklists(HomeData home) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChecklistScreen(parentId: home.parentId, initialTab: 1, api: widget.checklistApi),
+      ),
+    );
+    _refreshRecent();
   }
 
   Future<void> _refreshRecent() async {
@@ -327,6 +340,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       dday: home.dday,
                       onTap: () => context.go('/survey'),
                     ),
+                    if (home.receivedChecklists > 0) ...[
+                      const SizedBox(height: 12),
+                      _ChecklistBanner(count: home.receivedChecklists, onTap: () => _openChecklists(home)),
+                    ],
                     const SizedBox(height: 24),
                     ..._recordArea(),
                     const SizedBox(height: 28),
@@ -1020,6 +1037,43 @@ class _OutlinePill extends StatelessWidget {
         textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
       ),
       child: Text(label),
+    );
+  }
+}
+
+
+/// "받은 체크리스트 N개" → 관찰 체크리스트 받은 탭
+class _ChecklistBanner extends StatelessWidget {
+  const _ChecklistBanner({required this.count, required this.onTap});
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.mint,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              const Icon(Icons.checklist, color: AppColors.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '받은 관찰 체크리스트 $count개',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.text),
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: AppColors.text),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

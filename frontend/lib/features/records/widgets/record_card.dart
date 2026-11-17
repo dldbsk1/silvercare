@@ -35,6 +35,7 @@ class RecordCard extends StatelessWidget {
   IconData get _icon {
     if (record.inputType == 'voice') return Icons.mic_none;
     if (record.inputType == 'symptom') return Icons.monitor_heart_outlined;
+    if (record.inputType == 'checklist') return Icons.checklist;
     if (record.source == 'call') return Icons.phone_outlined;
     return Icons.edit_outlined;
   }

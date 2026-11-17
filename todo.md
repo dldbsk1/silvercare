@@ -320,13 +320,13 @@
 - [x] 👤 Flutter: 초대받은 사람 → 첫 설정 [초대 코드 입력] → 초대 코드·메시지 붙여넣기 (베타: 링크 대신 코드 공유) → 미리보기·동의·(이름) → 수락 (부모님 등록 건너뜀). 링크로 앱 바로 열기(딥링크)는 위 A-3 항목 남음
 
 ### 관찰 체크리스트 — A-TASK
-- [ ] `GET /v1/parents/{id}/checklists/suggestions` — 없음·부족 항목 최대 6개
-- [ ] `POST /v1/parents/{id}/checklists` — 항목 1개 이상, 받을 사람(나 포함), 확인 날짜
-- [ ] `GET /v1/parents/{id}/checklists` — 보낸/받은 목록, 진행 n/m
-- [ ] `GET /v1/checklists/{id}` — 항목별 정해진 관찰 질문 (자유 질문 없음)
-- [ ] `PUT /v1/checklists/{id}/items/{task_id}/answer` — 답 = 기록 1건, "못 봤어요"는 기록 안 만들고 다음 추천에 포함
-- [ ] `POST /v1/checklists/{id}/submit` — 모든 항목 답해야 제출, 보낸 사람에게 알림
-- [ ] 52항목별 관찰 질문 문구 데이터 (팀이 작성)
+- [x] 명세: API 명세서 6장 + `관찰 체크리스트 개발 계획.md` (디자인 SCR_A_310, 재활 제외, 있었어요/없었어요, 기록은 보낼 때 생성, `011_checklists.sql`)
+- [x] 서버: `draft`·보내기·목록·상세·답·제출 (`checklist_service`), 알림 저장, 가족 나가기·탈퇴 자동 취소, 홈 `received_checklists_open`, 체크리스트 기록 분류 고정
+- [x] 앱: 관찰 체크리스트 (보내기·받은 탭), 답하기, 보낸 상세, 가족 화면 버튼, 홈 카드, 기록 아이콘
+- [ ] 👤 `011_checklists.sql` 적용 → `tests/integration/test_checklists.py` + `flutter test test/checklist_screen_test.dart`
+- [ ] 설명 문구 42개 팀 검토 (`survey_items.observation_hint`)
+- [ ] 대·소변 조절 답 문구 ("혼자 하심/조금 도와드림/다 도와드림" 어색함)
+- [ ] 확인 날짜 다음 날 10:00 알림 (정기 작업 · FCM 연동 때)
 
 ### 조사 일정·브리핑 — A-SCH / A-BRF
 - [ ] 후보 날짜 등록(지난 날짜 불가)·목록·가능 인원

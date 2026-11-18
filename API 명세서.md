@@ -231,6 +231,8 @@
 | GET | `/v1/records/{record_id}/versions` | A-DET-002 | P1 | 원문·수정본·작성자·시각 |
 | POST | `/v1/records/{record_id}/comments` | A-DET-002 | P1 | 가족 타인 기록 댓글 |
 | POST | `/v1/records/{record_id}/reclassify` | A-HOME-004 | P0 오류복구 | AI 분류 재시도 |
+| POST | `/v1/records/{record_id}/replace-text` | A-HOME-004 | P0 오류복구 | 받아쓰기 실패 음성 → 같은 기록을 글 기록으로 (설계 추가, 4.2.1) |
+| POST | `/v1/records/{record_id}/replace-audio` | A-HOME-004 | P0 오류복구 | 받아쓰기 실패 음성 → 새 녹음으로 교체 (설계 추가, 4.2.1) |
 | GET | `/v1/records/{record_id}/processing` | A-HOME-001/004 | P0 | STT/분류 진행·실패 상태 조회(설계 추가) |
 
 ### 4.1 텍스트 기록
@@ -274,6 +276,33 @@
 - 인터넷이 없으면 Flutter 로컬 저장소에 보관, 재연결 후 동일 `Idempotency-Key`로 전송.
 - FastAPI가 비공개 Supabase Storage에 음성 원본 저장 → STT → 분류. 원본 업로드가 먼저 완료되어야 하고 임시 상태도 DB에 남긴다. 사용자에게 공개 Storage URL을 전달하지 않는다.
 - **저장 확인 10초 목표**는 기능명세 완료 기준이며 AI 처리 시간이 길면 원본 저장을 먼저 확인하고 처리 중임을 분리해서 표시해야 한다(표시 방식 검증 필요).
+
+#### 4.2.1 받아쓰기 실패 → 같은 기록에서 글로 적기 / 다시 녹음
+
+녹음 파일 문제 등으로 받아쓰기에 실패한 기록을 새 기록 없이 되살린다. 실패한 기록이 기록함에 남지 않는다.
+
+- 공통 조건: 작성자만 (다른 가족 → 403). 음성 + 원문 없음 + `processing_status=failed` 만 → 그 외 409 `NOT_TRANSCRIPTION_FAILED`
+- 기록 시각(`recorded_at`)·출처·일어난 시각 그대로
+- 이전 음성 파일: 업로드를 `expired`로 바꿈 → 기존 정리 작업(1시간마다)이 Storage에서 삭제
+- DB: `012_audio_fallback.sql` — `guard_record_write` 트리거에 `app.writer = audio_fallback` 경로 추가 (위 조건에서만 `input_type`·`audio_path` 변경 허용) + `013_audio_fallback_uploads.sql` — `guard_audio_upload`에 같은 경로로 이전 업로드 `consumed → expired` 허용
+
+**POST `/v1/records/{record_id}/replace-text`** → 200
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `text` | string | ✓ | 앞뒤 공백 제거 후 1~1000자 (텍스트 기록과 같음) |
+
+- `input_type` → `text`, 음성 경로·길이 비움, 원문 = 현재 글 = `text`, 분류 작업 등록 (`processing_status=pending`)
+
+**POST `/v1/records/{record_id}/replace-audio`** → 202
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `upload_id` | UUID | ✓ | `POST /v1/parents/{parent_id}/records/audio/upload-url`로 새로 받은 업로드 |
+| `duration_seconds` | int | ✓ | 2~180 (앱 측정값, 워커가 실제 길이로 덮어씀) |
+
+- 업로드 확인은 음성 기록 생성과 같음 (`UPLOAD_EXPIRED` 410 / `AUDIO_ALREADY_USED` 409 / 파일 없음·형식 400)
+- 음성 경로 교체, 받아쓰기 작업 다시 등록 (`processing_status=pending`)
 
 ### 4.3 분류·수정·상태
 

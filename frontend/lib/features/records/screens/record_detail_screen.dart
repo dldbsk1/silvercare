@@ -1,13 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../app/theme.dart';
 import '../../../core/api/api_exception.dart';
 import '../../home/home_api.dart';
+import '../../home/voice_recorder.dart';
 import '../record_api.dart';
 import '../widgets/audio_player_bar.dart';
+import '../widgets/re_record_sheet.dart';
 import '../widgets/record_sheets.dart';
 import 'record_edit_screen.dart';
 
@@ -42,6 +43,8 @@ class RecordDetailScreen extends StatefulWidget {
     this.initialAction,
     this.recordApi,
     this.playerFactory,
+    this.homeApi,
+    this.recorder,
   });
 
   final String recordId;
@@ -50,6 +53,8 @@ class RecordDetailScreen extends StatefulWidget {
   /// 테스트용 교체
   final RecordApi? recordApi;
   final AudioPlayback Function()? playerFactory;
+  final HomeApi? homeApi;
+  final VoiceRecorder? recorder;
 
   @override
   State<RecordDetailScreen> createState() => _RecordDetailScreenState();
@@ -262,14 +267,26 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     });
   }
 
-  /// 녹음 파일 문제 → 홈에서 새로 녹음하거나 글로 남기기
-  void _goHome() {
-    final router = GoRouter.maybeOf(context);
-    if (router != null) {
-      router.go('/home');
-    } else {
-      Navigator.of(context).pop();
-    }
+  /// 녹음 파일 문제 → 같은 기록을 글로 (기록 시각·출처 유지)
+  Future<void> _writeInstead() async {
+    final saved = await Navigator.of(context, rootNavigator: true).push<RecordDetail>(
+      MaterialPageRoute(builder: (_) => RecordEditScreen(record: _record!, recordApi: _api, replaceVoice: true)),
+    );
+    if (saved == null) return;
+    await _mutate(() async => saved, done: '글로 저장했어요. 분류하는 중이에요.');
+  }
+
+  /// 녹음 파일 문제 → 같은 기록의 음성만 새로 (받아쓰기부터 다시)
+  Future<void> _reRecord() async {
+    final saved = await showReRecordSheet(
+      context,
+      record: _record!,
+      recordApi: _api,
+      homeApi: widget.homeApi,
+      recorder: widget.recorder,
+    );
+    if (saved == null) return;
+    await _mutate(() async => saved, done: '새 녹음을 올렸어요. 정리하는 중이에요.');
   }
 
   // ── 화면 ──
@@ -433,7 +450,10 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
       if (record.audioBroken) {
         return _Banner(
           message: '녹음 파일에 문제가 있어요. 다시 녹음하거나 글로 남겨 주세요.',
-          actions: [if (mine) ('새로 기록하기', _goHome)],
+          actions: [
+            if (mine) ('글로 적기', _writeInstead),
+            if (mine) ('다시 녹음하기', _reRecord),
+          ],
         );
       }
       return _Banner(
@@ -589,6 +609,8 @@ class _InfoRow extends StatelessWidget {
   final IconData trailing;
   final VoidCallback? onTap;
 
+  static const _labelWidth = 88.0;
+
   @override
   Widget build(BuildContext context) {
     return InkWell(
@@ -597,10 +619,13 @@ class _InfoRow extends StatelessWidget {
         constraints: const BoxConstraints(minHeight: 56),
         child: Row(
           children: [
-            Text(label, style: const TextStyle(fontSize: 16, color: AppColors.text)),
-            const Spacer(),
+            // 라벨 폭 고정 → 줄마다 값 시작 위치 같음 (변경 버튼 유무와 무관)
+            SizedBox(
+              width: _labelWidth,
+              child: Text(label, style: const TextStyle(fontSize: 16, color: AppColors.text)),
+            ),
             if (valueIcon != null) ...[Icon(valueIcon, size: 20, color: AppColors.text), const SizedBox(width: 6)],
-            Flexible(
+            Expanded(
               child: Text(
                 value,
                 overflow: TextOverflow.ellipsis,

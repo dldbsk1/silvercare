@@ -125,3 +125,20 @@ def mark_storage_deleted(db: Session, upload_ids: list[str]):
         """).bindparams(bindparam("ids", expanding=True)),
         {"ids": upload_ids}
     )
+
+
+def release_for_record(db: Session, record_id: str):
+    """기록이 음성을 버림 (글로 적기·다시 녹음) → expired. 파일 삭제는 정리 작업
+
+    트리거 허용 조건: app.writer = audio_fallback (013, 이 트랜잭션 한정)
+    """
+    db.execute(text("SELECT set_config('app.writer', 'audio_fallback', true)"))
+    db.execute(
+        text("""
+            UPDATE audio_uploads
+            SET status = 'expired', consumed_at = NULL, record_id = NULL
+            WHERE record_id = :id AND status = 'consumed'
+        """),
+        {"id": record_id}
+    )
+    db.execute(text("SELECT set_config('app.writer', '', true)"))

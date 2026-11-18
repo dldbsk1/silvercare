@@ -60,6 +60,7 @@ const audioProblems = {'AUDIO_MISSING', 'AUDIO_UNREADABLE', 'AUDIO_FORMAT_MISMAT
 class RecordDetail {
   RecordDetail({
     required this.id,
+    this.parentId = '',
     required this.isMine,
     required this.authorName,
     required this.inputType,
@@ -84,6 +85,7 @@ class RecordDetail {
 
   factory RecordDetail.fromJson(Map<String, dynamic> json) => RecordDetail(
         id: json['id'] as String,
+        parentId: json['parent_id'] as String? ?? '',
         isMine: json['is_mine'] as bool,
         authorName: json['author_name'] as String?,
         inputType: json['input_type'] as String,
@@ -107,6 +109,9 @@ class RecordDetail {
       );
 
   final String id;
+
+  /// 다시 녹음 → 업로드 URL 발급 (부모님별)
+  final String parentId;
   final bool isMine;
   final String? authorName;
 
@@ -289,4 +294,18 @@ class RecordApi {
 
   /// 실패한 단계부터 다시 (받아쓰기 / 분류)
   Future<void> reclassify(String recordId) => _api.post('/records/$recordId/reclassify');
+
+  /// 받아쓰기 실패 음성 → 같은 기록을 글 기록으로 (기록 시각·출처 유지, 이후 분류)
+  Future<RecordDetail> replaceText(String recordId, String text) async => RecordDetail.fromJson(
+        await _api.post('/records/$recordId/replace-text', body: {'text': text}) as Map<String, dynamic>,
+      );
+
+  /// 받아쓰기 실패 음성 → 새 녹음으로 교체 (받아쓰기부터 다시)
+  Future<RecordDetail> replaceAudio(String recordId, {required String uploadId, required int durationSeconds}) async =>
+      RecordDetail.fromJson(
+        await _api.post(
+          '/records/$recordId/replace-audio',
+          body: {'upload_id': uploadId, 'duration_seconds': durationSeconds},
+        ) as Map<String, dynamic>,
+      );
 }

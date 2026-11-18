@@ -22,6 +22,8 @@ from app.schemas.records import (
     RecordProcessingOut,
     RecordUpdateIn,
     RecordVersionsOut,
+    ReplaceAudioIn,
+    ReplaceTextIn,
     TextRecordIn,
     VoiceRecordIn,
 )
@@ -183,3 +185,31 @@ def reclassify_record(record_id: UUID, user: ConsentedUser, db: DbSession):
     """재처리 (A-HOME-004). 작성자만. 실패한 단계부터 (받아쓰기 / 분류)"""
     with db.begin():
         return {"data": record_service.reclassify(db, user.id, str(record_id))}
+
+
+@router.post("/records/{record_id}/replace-text", response_model=DataResponse[RecordOut])
+def replace_record_text(
+    record_id: UUID,
+    body: ReplaceTextIn,
+    user: ConsentedUser,
+    db: DbSession
+):
+    """받아쓰기 실패 음성 기록 → 같은 기록을 글 기록으로 (작성자만). 이후 분류"""
+    with db.begin():
+        return {"data": record_service.replace_with_text(db, user.id, str(record_id), body)}
+
+
+@router.post(
+    "/records/{record_id}/replace-audio",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=DataResponse[RecordOut]
+)
+def replace_record_audio(
+    record_id: UUID,
+    body: ReplaceAudioIn,
+    user: ConsentedUser,
+    db: DbSession
+):
+    """받아쓰기 실패 음성 기록 → 새 녹음으로 교체 (작성자만). 받아쓰기부터 다시"""
+    with db.begin():
+        return {"data": record_service.replace_audio(db, user.id, str(record_id), body)}

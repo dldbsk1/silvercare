@@ -70,6 +70,21 @@ class TextRecordIn(BaseModel):
     model_config = {"str_strip_whitespace": True}
 
 
+# ── 받아쓰기 실패 → 글로 적기 / 다시 녹음 (같은 기록) ──
+
+class ReplaceTextIn(BaseModel):
+    # 텍스트 기록과 같은 규칙: 앞뒤 공백 제거 후 1~1000자
+    text: str = Field(min_length=1, max_length=1000)
+
+    model_config = {"str_strip_whitespace": True}
+
+
+class ReplaceAudioIn(BaseModel):
+    # 새 업로드 (upload-url 로 발급). 길이: 앱 측정값, 워커가 실제 길이로 덮어씀
+    upload_id: UUID
+    duration_seconds: int = Field(ge=2, le=180)
+
+
 # 수정 불가 필드 → 400 IMMUTABLE_FIELD (POL-02 + 서버 관리 필드)
 IMMUTABLE_FIELDS = {
     "id", "parent_id", "author_id", "input_type",

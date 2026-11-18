@@ -186,6 +186,7 @@
 - [x] `POST /v1/records/{id}/reclassify` — 작성자만, 분석 중·사용자 분류면 409
   - [x] 실패한 단계부터: 받아쓰기 실패 → 받아쓰기부터 / 분류 실패 → 분류만
   - [x] 파일 문제 → 409 `AUDIO_INVALID` (새 녹음 안내), STT 미설정 상태 → 503
+  - [x] 파일 문제 → 같은 기록에서 글로 적기 (`replace-text`) / 다시 녹음 (`replace-audio`), 이전 음성은 정리 작업이 삭제 (`012_audio_fallback.sql`, `013_audio_fallback_uploads.sql`)
 - [x] 처리 상태에 `stage`(transcription / classification / done) 계산값
 - [x] 홈 최근 기록 3건 `GET /v1/parents/{id}/records?status=normal&limit=3`
 - [x] 기록 상세 `GET /v1/records/{id}` (원문·분류·수정 여부)

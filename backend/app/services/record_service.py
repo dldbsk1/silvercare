@@ -23,6 +23,8 @@ from app.schemas.records import (
     VOICE_TEXT_MAX_LENGTH,
     RecordListQuery,
     RecordUpdateIn,
+    ReplaceAudioIn,
+    ReplaceTextIn,
     TextRecordIn,
     VoiceRecordIn,
 )
@@ -352,6 +354,52 @@ def retry_transcription(db: Session, user_id: str, record) -> dict:
     record_repo.set_processing_status(db, record_id, "pending")
     transcription_service.enqueue_transcription(db, record_id)
     return get_processing(db, user_id, record_id)
+
+
+# ── 받아쓰기 실패 → 같은 기록에서 글로 적기 / 다시 녹음 ──
+
+def ensure_transcription_failed(record):
+    """음성 + 원문 없음 + failed 만. 그 외 → 409 (이미 처리됨·처리 중 등)"""
+    if not (
+        record["input_type"] == "voice"
+        and record["original_text"] is None
+        and record["processing_status"] == "failed"
+    ):
+        raise AppError(
+            409, "NOT_TRANSCRIPTION_FAILED", "받아쓰기에 실패한 기록만 바꿀 수 있어요."
+        )
+
+
+def replace_with_text(db: Session, user_id: str, record_id: str, body: ReplaceTextIn) -> dict:
+    """한 트랜잭션: 글 기록으로 전환 (기록 시각·출처 유지) → 이전 음성 해제 → 분류 작업
+
+    이전 음성 파일: 업로드 expired → 정리 작업이 삭제
+    """
+    access, record = record_access(db, user_id, record_id, for_update=True)
+    ensure_author(access, record)
+    ensure_transcription_failed(record)
+
+    upload_repo.release_for_record(db, record_id)
+    record_repo.replace_with_text(db, record_id, body.text)
+    classification_service.enqueue_classification(db, record_id, record["text_version"])
+
+    return to_detail(db, record_repo.get_record(db, record_id), user_id)
+
+
+def replace_audio(db: Session, user_id: str, record_id: str, body: ReplaceAudioIn) -> dict:
+    """한 트랜잭션: 새 업로드 확인 → 이전 음성 해제 → 경로 교체 → 업로드 사용 → 받아쓰기 작업"""
+    access, record = record_access(db, user_id, record_id, for_update=True)
+    ensure_author(access, record)
+    ensure_transcription_failed(record)
+
+    upload = audio_upload_service.take_upload(db, access, str(body.upload_id))
+
+    upload_repo.release_for_record(db, record_id)
+    record_repo.replace_audio(db, record_id, upload["audio_path"], body.duration_seconds)
+    upload_repo.consume(db, str(upload["id"]), record_id)
+    transcription_service.enqueue_transcription(db, record_id)
+
+    return to_detail(db, record_repo.get_record(db, record_id), user_id)
 
 
 # ── 수정 (A-DET-002) ──

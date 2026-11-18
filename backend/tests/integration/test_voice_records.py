@@ -750,3 +750,127 @@ def test_playback_hidden_from_other_family(client, db, consent_docs, parent_id, 
     agree_all(client, consent_docs)
 
     assert client.get(f"/v1/records/{record_id}/audio").status_code == 404
+
+
+# ── 받아쓰기 실패 → 같은 기록에서 글로 적기 / 다시 녹음 ──
+
+def failed_voice_record(client, db, fake, parent_id):
+    """파일 문제로 받아쓰기 실패한 기록 + 그 업로드"""
+    upload = uploaded(client, fake, parent_id, b"not audio")
+    response = create(client, upload["upload_id"], parent_id, source="call")
+    record_id = response.json()["data"]["id"]
+    run_transcribe(db, record_id)
+    assert processing(client, record_id)["processing_error"] == "AUDIO_UNREADABLE"
+    return record_id, upload
+
+
+def test_replace_with_text(client, db, parent_id, fake_storage):
+    record_id, old = failed_voice_record(client, db, fake_storage, parent_id)
+    before = client.get(f"/v1/records/{record_id}").json()["data"]
+
+    response = client.post(f"/v1/records/{record_id}/replace-text", json={"text": "  점심 다 드셨어요  "})
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["input_type"] == "text"
+    assert data["original_text"] == data["current_text"] == "점심 다 드셨어요"
+    assert data["processing_status"] == "pending"
+    assert data["audio_duration_seconds"] is None and not data["audio_available"]
+    # 기록 시각·출처·순번 그대로
+    assert (data["recorded_at"], data["source"], data["text_version"]) == (
+        before["recorded_at"], "call", before["text_version"]
+    )
+    assert (CLASSIFY, "queued") in [tuple(j) for j in job_rows(db, record_id)]
+
+    # 이전 음성 → expired → 정리 작업이 삭제
+    assert tuple(upload_state(db, old["upload_id"])) == ("expired", False)
+    upload_cleanup_service.run(db)
+    assert tuple(upload_state(db, old["upload_id"])) == ("expired", True)
+    assert old["audio_path"] in fake_storage.removed
+
+    # 두 번째 → 이미 글 기록
+    again = client.post(f"/v1/records/{record_id}/replace-text", json={"text": "다시"})
+    assert again.status_code == 409
+    assert again.json()["error"]["code"] == "NOT_TRANSCRIPTION_FAILED"
+
+
+def test_replace_audio(client, db, parent_id, fake_storage):
+    record_id, old = failed_voice_record(client, db, fake_storage, parent_id)
+    new = uploaded(client, fake_storage, parent_id)
+
+    response = client.post(
+        f"/v1/records/{record_id}/replace-audio",
+        json={"upload_id": new["upload_id"], "duration_seconds": 3}
+    )
+    assert response.status_code == 202, response.text
+    data = response.json()["data"]
+    assert data["input_type"] == "voice" and data["processing_status"] == "pending"
+    assert data["original_text"] is None
+
+    assert tuple(upload_state(db, old["upload_id"])) == ("expired", False)
+    assert tuple(upload_state(db, new["upload_id"])) == ("consumed", False)
+
+    # 받아쓰기 다시 → 새 파일로 성공
+    run_transcribe(db, record_id)
+    assert client.get(f"/v1/records/{record_id}").json()["data"]["original_text"] == MOCK_TRANSCRIPT
+
+    upload_cleanup_service.run(db)
+    assert old["audio_path"] in fake_storage.removed
+    assert new["audio_path"] in fake_storage.files
+
+    # 같은 업로드 재사용 X
+    other_id, _ = failed_voice_record(client, db, fake_storage, parent_id)
+    reused = client.post(
+        f"/v1/records/{other_id}/replace-audio",
+        json={"upload_id": new["upload_id"], "duration_seconds": 3}
+    )
+    assert reused.json()["error"]["code"] == "AUDIO_ALREADY_USED"
+
+
+def test_replace_rejected(client, db, consent_docs, parent_id, fake_storage):
+    record_id, _ = failed_voice_record(client, db, fake_storage, parent_id)
+
+    # 빈 글
+    assert client.post(f"/v1/records/{record_id}/replace-text", json={"text": "   "}).status_code == 422
+
+    # 받아쓰기 성공 기록
+    ok_id = new_voice_record(client, fake_storage, parent_id)
+    run_transcribe(db, ok_id)
+    response = client.post(f"/v1/records/{ok_id}/replace-text", json={"text": "글"})
+    assert response.json()["error"]["code"] == "NOT_TRANSCRIPTION_FAILED"
+
+    # 다른 가족 (쓰기 권한 있어도 작성자 아님)
+    join_family(db, client, consent_docs, parent_id, "writer")
+    response = client.post(f"/v1/records/{record_id}/replace-text", json={"text": "글"})
+    assert response.status_code == 403
+
+
+def test_audio_fallback_trigger_only_for_failed(client, db, parent_id, fake_storage):
+    record_id = new_voice_record(client, fake_storage, parent_id)
+
+    def fallback(query):
+        try:
+            db.execute(text("SELECT set_config('app.writer', 'audio_fallback', true)"))
+            db.execute(text(query), {"id": record_id})
+            db.commit()
+            return True
+        except DBAPIError:
+            db.rollback()
+            return False
+        finally:
+            run_sql(db, "SELECT set_config('app.writer', '', true)")
+
+    to_text = """
+        UPDATE records SET input_type = 'text', audio_path = NULL, audio_duration_seconds = NULL,
+               original_text = 'x', current_text = 'x'
+        WHERE id = :id
+    """
+    # 받아쓰기 대기 (failed 아님)
+    assert not fallback(to_text)
+
+    run_sql(db, "UPDATE records SET processing_status = 'failed', processing_error = 'AUDIO_MISSING' WHERE id = :id", id=record_id)
+    # 글 없이 전환 / 원문 ≠ 현재 글
+    assert not fallback(to_text.replace("original_text = 'x'", "original_text = NULL").replace("current_text = 'x'", "current_text = NULL"))
+    assert not fallback(to_text.replace("current_text = 'x'", "current_text = 'y'"))
+    # 같은 경로로 "다시 녹음"
+    assert not fallback("UPDATE records SET processing_status = 'pending', processing_error = NULL WHERE id = :id")
+    assert fallback(to_text)

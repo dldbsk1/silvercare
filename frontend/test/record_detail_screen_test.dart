@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'package:silvercare/core/api/api_exception.dart';
+import 'package:silvercare/features/home/home_api.dart';
+import 'package:silvercare/features/home/voice_recorder.dart';
 import 'package:silvercare/features/records/record_api.dart';
 import 'package:silvercare/features/records/screens/record_detail_screen.dart';
 import 'package:silvercare/features/records/widgets/audio_player_bar.dart';
@@ -156,6 +159,71 @@ class FakeRecordApi extends RecordApi {
     calls.add('reclassify');
     current = {...current, 'processing_status': 'pending', 'processing_error': null};
   }
+
+  @override
+  Future<RecordDetail> replaceText(String recordId, String text) async {
+    calls.add('replaceText:$text');
+    current = {
+      ...current,
+      'input_type': 'text',
+      'current_text': text,
+      'original_text': text,
+      'processing_status': 'pending',
+      'stage': 'classification',
+      'processing_error': null,
+      'audio_duration_seconds': null,
+    };
+    return _detail;
+  }
+
+  @override
+  Future<RecordDetail> replaceAudio(String recordId, {required String uploadId, required int durationSeconds}) async {
+    calls.add('replaceAudio:$uploadId');
+    current = {...current, 'processing_status': 'pending', 'processing_error': null};
+    return _detail;
+  }
+}
+
+/// 다시 녹음: 업로드 흉내
+class FakeUploadApi extends HomeApi {
+  final uploaded = <int>[];
+
+  @override
+  Future<AudioUpload> requestUpload(String parentId) async =>
+      AudioUpload(uploadId: 'u1', bucket: 'audio', path: 'p/u1.m4a', token: 't');
+
+  @override
+  Future<void> uploadAudio(AudioUpload upload, Uint8List bytes) async => uploaded.add(bytes.length);
+}
+
+class FakeAudio extends RecordedAudio {
+  FakeAudio() : super('fake.m4a');
+
+  @override
+  Future<Uint8List> readBytes() async => Uint8List(10);
+
+  @override
+  Future<void> delete() async {}
+}
+
+class FakeRecorder implements VoiceRecorder {
+  @override
+  Future<bool> hasPermission() async => true;
+
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<RecordedAudio?> stop() async => FakeAudio();
+
+  @override
+  Future<void> cancel() async {}
+
+  @override
+  Stream<double> levels() => const Stream.empty();
+
+  @override
+  Future<void> dispose() async {}
 }
 
 class FakePlayback implements AudioPlayback {
@@ -198,7 +266,14 @@ void tallScreen(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
-Future<void> open(WidgetTester tester, FakeRecordApi api, {RecordAction? action, FakePlayback? player}) async {
+Future<void> open(
+  WidgetTester tester,
+  FakeRecordApi api, {
+  RecordAction? action,
+  FakePlayback? player,
+  HomeApi? homeApi,
+  VoiceRecorder? recorder,
+}) async {
   tallScreen(tester);
   await tester.pumpWidget(MaterialApp(
     home: RecordDetailScreen(
@@ -206,6 +281,8 @@ Future<void> open(WidgetTester tester, FakeRecordApi api, {RecordAction? action,
       recordApi: api,
       initialAction: action,
       playerFactory: player == null ? null : () => player,
+      homeApi: homeApi,
+      recorder: recorder,
     ),
   ));
   await tester.pumpAndSettle();
@@ -425,7 +502,77 @@ void main() {
     await open(tester, FakeRecordApi({...failed, 'processing_error': 'AUDIO_UNREADABLE'}));
     expect(find.text('녹음 파일에 문제가 있어요. 다시 녹음하거나 글로 남겨 주세요.'), findsOneWidget);
     expect(find.text('다시 시도'), findsNothing);
-    expect(find.text('새로 기록하기'), findsOneWidget);
+    expect(find.text('글로 적기'), findsOneWidget);
+    expect(find.text('다시 녹음하기'), findsOneWidget);
+  });
+
+  final broken = rec(
+    processing: 'failed',
+    stage: 'transcription',
+    error: 'AUDIO_UNREADABLE',
+    text: null,
+    original: null,
+    items: const [],
+    classifiedBy: null,
+  );
+
+  testWidgets('파일 문제 → 글로 적기 → 같은 기록이 글 기록으로 (분류 중)', (tester) async {
+    final api = FakeRecordApi(broken);
+    await open(tester, api);
+
+    await tester.tap(find.text('글로 적기'));
+    await tester.pumpAndSettle();
+    expect(find.text('녹음 대신 이 글로 저장돼요. 기록한 시각은 그대로예요.'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), '  점심 다 드셨어요 ');
+    await tester.pump();
+    await tester.tap(find.text('저장'));
+    await tester.pumpAndSettle();
+
+    expect(api.calls, contains('replaceText:점심 다 드셨어요'));
+    expect(find.text('점심 다 드셨어요'), findsOneWidget);
+    expect(find.text('녹음 파일에 문제가 있어요. 다시 녹음하거나 글로 남겨 주세요.'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('파일 문제 → 다시 녹음하기 → 2초 미만 → 안내, 올리지 않음', (tester) async {
+    final api = FakeRecordApi(broken);
+    final uploads = FakeUploadApi();
+    await open(tester, api, homeApi: uploads, recorder: FakeRecorder());
+
+    await tester.tap(find.text('다시 녹음하기'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('녹음 시작'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('멈춤'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2초 이상 말해 주세요.'), findsOneWidget);
+    expect(uploads.uploaded, isEmpty);
+    expect(api.calls.where((c) => c.startsWith('replaceAudio')), isEmpty);
+  });
+
+  testWidgets('파일 문제 → 다시 녹음하기 → 업로드 + 음성 교체 → 받아쓰는 중', (tester) async {
+    final api = FakeRecordApi(broken);
+    final uploads = FakeUploadApi();
+    await open(tester, api, homeApi: uploads, recorder: FakeRecorder());
+
+    await tester.tap(find.text('다시 녹음하기'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('녹음 시작'));
+    await tester.pump();
+    // 녹음 시간 = 실제 시계 (Stopwatch) → 2초 넘게 실제 대기
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 2100)));
+    await tester.tap(find.byTooltip('멈춤'));
+    // 받아쓰는 중 → 도는 표시 (끝나지 않음) → pumpAndSettle X, 창 닫힘 애니메이션만 진행
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(uploads.uploaded, [10]);
+    expect(api.calls, contains('replaceAudio:u1'));
+    expect(find.text('다시 녹음하기'), findsNothing);
+    expect(find.text('받아쓰는 중…'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('분류 실패 → 다시 시도 + 직접 분류하기', (tester) async {

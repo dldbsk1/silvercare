@@ -418,3 +418,42 @@ def edit_version(db: Session, record_id: str) -> int:
         text("SELECT COALESCE(max(version), 0) FROM record_versions WHERE record_id = :id"),
         {"id": record_id}
     ).scalar_one()
+
+
+# ── 받아쓰기 실패 → 글로 적기 / 다시 녹음 (트리거 허용: app.writer = audio_fallback) ──
+
+def replace_with_text(db: Session, record_id: str, text_value: str):
+    """음성 → 글 기록. 원문 = 현재 글, 음성 비움, 분류 대기"""
+    db.execute(text("SELECT set_config('app.writer', 'audio_fallback', true)"))
+    db.execute(
+        text("""
+            UPDATE records
+            SET input_type = 'text',
+                audio_path = NULL,
+                audio_duration_seconds = NULL,
+                original_text = :text,
+                current_text = :text,
+                processing_status = 'pending',
+                processing_error = NULL
+            WHERE id = :id
+        """),
+        {"id": record_id, "text": text_value}
+    )
+    db.execute(text("SELECT set_config('app.writer', '', true)"))
+
+
+def replace_audio(db: Session, record_id: str, audio_path: str, duration_seconds: int):
+    """새 음성으로 교체. 받아쓰기 대기"""
+    db.execute(text("SELECT set_config('app.writer', 'audio_fallback', true)"))
+    db.execute(
+        text("""
+            UPDATE records
+            SET audio_path = :path,
+                audio_duration_seconds = :duration,
+                processing_status = 'pending',
+                processing_error = NULL
+            WHERE id = :id
+        """),
+        {"id": record_id, "path": audio_path, "duration": duration_seconds}
+    )
+    db.execute(text("SELECT set_config('app.writer', '', true)"))

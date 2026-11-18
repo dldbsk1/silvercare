@@ -7,11 +7,13 @@ import '../widgets/record_sheets.dart';
 
 /// 글 고치기 (Figma: 내용 입력칸 / 고쳐도 원문은 그대로 남아요 / 원문 / 취소 · 저장)
 /// 저장 → 고친 기록 반환. 동시 수정 (409 EDIT_CONFLICT) → 최신 기록 불러와 순번 갱신, 내 글은 그대로
+/// replaceVoice: 받아쓰기 실패 음성 → "글로 적기" (빈 칸에서 시작, 저장 = 글 기록으로 전환)
 class RecordEditScreen extends StatefulWidget {
-  const RecordEditScreen({super.key, required this.record, required this.recordApi});
+  const RecordEditScreen({super.key, required this.record, required this.recordApi, this.replaceVoice = false});
 
   final RecordDetail record;
   final RecordApi recordApi;
+  final bool replaceVoice;
 
   @override
   State<RecordEditScreen> createState() => _RecordEditScreenState();
@@ -23,7 +25,8 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
   bool _saving = false;
   String? _notice;
 
-  int get _limit => _record.isVoice ? 2000 : 1000;
+  // 글로 적기 = 글 기록 규칙 (1000자)
+  int get _limit => _record.isVoice && !widget.replaceVoice ? 2000 : 1000;
   String get _value => _text.text.trim();
   bool get _changed => _value.isNotEmpty && _value != (_record.currentText ?? '');
 
@@ -36,7 +39,9 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      final saved = await widget.recordApi.update(_record.id, baseVersion: _record.editVersion, text: _value);
+      final saved = widget.replaceVoice
+          ? await widget.recordApi.replaceText(_record.id, _value)
+          : await widget.recordApi.update(_record.id, baseVersion: _record.editVersion, text: _value);
       if (mounted) Navigator.of(context).pop(saved);
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -99,8 +104,8 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
           surfaceTintColor: Colors.transparent,
           leading: IconButton(icon: const Icon(Icons.arrow_back), tooltip: '뒤로', onPressed: _leave),
           titleSpacing: 0,
-          title: const Text(
-            '글 고치기',
+          title: Text(
+            widget.replaceVoice ? '글로 적기' : '글 고치기',
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.text),
           ),
         ),
@@ -149,7 +154,10 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
                 ),
               ),
             ),
-            const Text('고쳐도 원문은 그대로 남아요', style: TextStyle(fontSize: 16, color: AppColors.subtext)),
+            Text(
+              widget.replaceVoice ? '녹음 대신 이 글로 저장돼요. 기록한 시각은 그대로예요.' : '고쳐도 원문은 그대로 남아요',
+              style: const TextStyle(fontSize: 16, color: AppColors.subtext),
+            ),
             if (original != null && original.isNotEmpty) ...[
               const SizedBox(height: 24),
               OriginalBlock(text: original),

@@ -99,6 +99,7 @@ class HomeData {
     required this.dday,
     required this.recentRecords,
     this.receivedChecklists = 0,
+    this.unreadNotifications = 0,
   });
 
   factory HomeData.fromJson(Map<String, dynamic> json) => HomeData(
@@ -109,6 +110,7 @@ class HomeData {
             .map((e) => RecordSummary.fromJson(e as Map<String, dynamic>))
             .toList(),
         receivedChecklists: json['received_checklists_open'] as int? ?? 0,
+        unreadNotifications: json['unread_notifications'] as int? ?? 0,
       );
 
   final String parentId;
@@ -118,6 +120,9 @@ class HomeData {
 
   /// 받은 관찰 체크리스트 중 대기 수 → 홈 카드
   final int receivedChecklists;
+
+  /// 안 읽은 알림 수 → 종 아이콘 점
+  final int unreadNotifications;
 }
 
 /// 처리 상태 (GET /v1/records/{id}/processing)
@@ -170,19 +175,30 @@ class RecordResult {
 
 /// 음성 업로드 URL (POST .../records/audio/upload-url)
 class AudioUpload {
-  AudioUpload({required this.uploadId, required this.bucket, required this.path, required this.token});
+  AudioUpload({
+    required this.uploadId,
+    required this.bucket,
+    required this.path,
+    required this.token,
+    this.contentType = HomeApi.audioContentType,
+  });
 
-  factory AudioUpload.fromJson(Map<String, dynamic> json) => AudioUpload(
+  factory AudioUpload.fromJson(Map<String, dynamic> json, {String contentType = HomeApi.audioContentType}) =>
+      AudioUpload(
         uploadId: json['upload_id'] as String,
         bucket: json['bucket'] as String,
         path: json['audio_path'] as String,
         token: json['token'] as String,
+        contentType: contentType,
       );
 
   final String uploadId;
   final String bucket;
   final String path;
   final String token;
+
+  /// 요청 때 밝힌 형식 (서버 검증: 실제 업로드와 같아야)
+  final String contentType;
 }
 
 /// 홈: 홈 묶음 + 기록 저장 (텍스트·음성) + 처리 상태
@@ -193,7 +209,7 @@ class HomeApi {
   final ApiClient? client;
   late final ApiClient _api = client ?? ApiClient();
 
-  /// 녹음 형식 (m4a = AAC). 서버 허용 형식 중 하나
+  /// 기본 녹음 형식 (앱 m4a = AAC). 웹 WAV → RecordedAudio.contentType
   static const audioContentType = 'audio/mp4';
 
   Future<HomeData> fetchHome(String parentId) async =>
@@ -214,19 +230,19 @@ class HomeApi {
     return (data as Map<String, dynamic>)['id'] as String;
   }
 
-  Future<AudioUpload> requestUpload(String parentId) async {
+  Future<AudioUpload> requestUpload(String parentId, {String contentType = audioContentType}) async {
     final data = await _api.post(
       '/parents/$parentId/records/audio/upload-url',
-      body: {'content_type': audioContentType},
+      body: {'content_type': contentType},
     );
-    return AudioUpload.fromJson(data as Map<String, dynamic>);
+    return AudioUpload.fromJson(data as Map<String, dynamic>, contentType: contentType);
   }
 
   /// 서버가 발급한 서명 업로드 (앱은 Storage 직접 권한 X)
   Future<void> uploadAudio(AudioUpload upload, Uint8List bytes) async {
     await Supabase.instance.client.storage
         .from(upload.bucket)
-        .uploadBinaryToSignedUrl(upload.path, upload.token, bytes, const FileOptions(contentType: audioContentType));
+        .uploadBinaryToSignedUrl(upload.path, upload.token, bytes, FileOptions(contentType: upload.contentType));
   }
 
   /// 음성 기록 → 기록 id. 받아쓰기·분류는 서버 작업

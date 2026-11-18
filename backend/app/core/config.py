@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     # Cloud Tasks·Scheduler가 워커 호출할 때 쓰는 서비스 계정 (워커 run.invoker 권한)
     TASKS_INVOKER_SA: str | None = None
 
+    # 푸시 (app/db/fcm.py). none: 앱 안 알림만 저장 (로컬·테스트) / fcm: FCM HTTP v1 발송
+    # 인증: Cloud Run 서비스 계정 토큰 (키 파일 X). FCM_PROJECT 비움 → GCP_PROJECT
+    PUSH_PROVIDER: Literal["none", "fcm"] = "none"
+    FCM_PROJECT: str | None = None
+
+    # 컨디션 저녁 알림. 컨디션 입력 화면 생기기 전 false (적을 곳 없는 알림 방지)
+    CONDITION_REMINDER_ENABLED: bool = False
+
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
         extra="ignore"
@@ -76,7 +84,13 @@ class Settings(BaseSettings):
             missing = [k for k in ("GCP_PROJECT", "WORKER_URL", "TASKS_INVOKER_SA") if not getattr(self, k)]
             if missing:
                 raise ValueError(f"WORKER_WAKE=cloud_tasks → {', '.join(missing)} 필요")
+        if self.PUSH_PROVIDER == "fcm" and not (self.FCM_PROJECT or self.GCP_PROJECT):
+            raise ValueError("PUSH_PROVIDER=fcm → FCM_PROJECT 또는 GCP_PROJECT 필요")
         return self
+
+    @property
+    def fcm_project(self) -> str | None:
+        return self.FCM_PROJECT or self.GCP_PROJECT
 
 
 settings = Settings()

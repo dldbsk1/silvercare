@@ -17,7 +17,13 @@ from sqlalchemy import text
 
 from app.ai.provider import check_ai_config
 from app.db.session import new_session
-from app.services import deletion_service, parent_deletion_service, rate_limit, upload_cleanup_service
+from app.services import (
+    deletion_service,
+    parent_deletion_service,
+    rate_limit,
+    scheduled_notification_service,
+    upload_cleanup_service,
+)
 from app.workers.tasks import (
     TASKS,
     Job,
@@ -35,6 +41,8 @@ logger = logging.getLogger("silvercare.worker")
 POLL_SECONDS = 1.0
 STALE_MINUTES = 10
 CLEANUP_INTERVAL_SECONDS = 60 * 60
+# 정기 알림 확인 (보낼 시각 지난 것만, 중복 X)
+NOTIFY_INTERVAL_SECONDS = 10 * 60
 
 
 def claim_job(db) -> Job | None:
@@ -243,6 +251,10 @@ def run_cleanup():
         logger.exception("공간 삭제 처리 실패")
 
 
+def run_notify() -> dict[str, int]:
+    return scheduled_notification_service.run(new_session)
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -253,11 +265,16 @@ def main():
     logger.info("워커 시작 (등록된 작업: %s)", sorted(TASKS) or "없음")
 
     next_cleanup = 0.0
+    next_notify = 0.0
     try:
         while True:
             if time.monotonic() >= next_cleanup:
                 run_cleanup()
                 next_cleanup = time.monotonic() + CLEANUP_INTERVAL_SECONDS
+
+            if time.monotonic() >= next_notify:
+                run_notify()
+                next_notify = time.monotonic() + NOTIFY_INTERVAL_SECONDS
 
             if not run_once():
                 time.sleep(POLL_SECONDS)

@@ -116,7 +116,7 @@ class _ReRecordSheetState extends State<_ReRecordSheet> {
     }
 
     try {
-      final upload = await widget.homeApi.requestUpload(widget.record.parentId);
+      final upload = await widget.homeApi.requestUpload(widget.record.parentId, contentType: audio.contentType);
       await widget.homeApi.uploadAudio(upload, await audio.readBytes());
       final updated = await widget.recordApi.replaceAudio(
         widget.record.id,

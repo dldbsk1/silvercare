@@ -2,6 +2,8 @@
     <!-- 서버 연결 (배포 빌드 포함) · 음성 기록 마이크 -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- 푸시 알림 (Android 13+ 권한 요청) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="silvercare"
         android:name="${applicationName}"

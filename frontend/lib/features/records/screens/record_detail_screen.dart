@@ -9,6 +9,7 @@ import '../../home/voice_recorder.dart';
 import '../record_api.dart';
 import '../widgets/audio_player_bar.dart';
 import '../widgets/re_record_sheet.dart';
+import '../widgets/record_comments_section.dart';
 import '../widgets/record_sheets.dart';
 import 'record_edit_screen.dart';
 
@@ -33,7 +34,7 @@ Future<void> openRecordDetail(
 ///
 /// - 머리글: 일어난 시각 (없으면 기록한 시각) · 작성자
 /// - 분류 줄 (여러 개) + 바꾸기 / 글 / 수정됨 · 원문 보기 / 음성 / 출처 · 수정 이력 / 글 고치기 · 기록지에서 제외
-/// - 다른 가족 기록: 보기만 (댓글 → 베타 이후)
+/// - 다른 가족 기록: 보기 + 댓글 (관리자·쓰기 가족)
 /// - 정리 중 → 2초마다 확인, 60초까지
 /// - 수정 → base_version = 본 edit_version. 409 EDIT_CONFLICT → 최신 기록 다시 불러옴
 class RecordDetailScreen extends StatefulWidget {
@@ -367,6 +368,8 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
         const SizedBox(height: 20),
         _infoCard(record),
         if (record.isMine) ..._buttons(record),
+        const SizedBox(height: 28),
+        RecordCommentsSection(recordId: record.id, api: _api),
       ],
     );
   }

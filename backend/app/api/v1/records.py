@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
 from fastapi.responses import JSONResponse
 
 from app.api.deps import (
@@ -16,6 +16,8 @@ from app.schemas.records import (
     AudioPlaybackOut,
     AudioUploadUrlIn,
     AudioUploadUrlOut,
+    CommentIn,
+    CommentOut,
     RecordListItemOut,
     RecordListQuery,
     RecordOut,
@@ -27,7 +29,7 @@ from app.schemas.records import (
     TextRecordIn,
     VoiceRecordIn,
 )
-from app.services import audio_upload_service, record_service
+from app.services import audio_upload_service, comment_service, record_service
 from app.services.idempotency import run_idempotent
 
 
@@ -213,3 +215,31 @@ def replace_record_audio(
     """받아쓰기 실패 음성 기록 → 새 녹음으로 교체 (작성자만). 받아쓰기부터 다시"""
     with db.begin():
         return {"data": record_service.replace_audio(db, user.id, str(record_id), body)}
+
+
+# ── 댓글 (A-DET-002) ──
+
+@router.get("/records/{record_id}/comments", response_model=DataResponse[list[CommentOut]])
+def list_comments(record_id: UUID, user: ConsentedUser, db: DbSession):
+    """오래된 순. 가족 모두 (보기 가족 포함). meta.can_comment"""
+    with db.begin():
+        return comment_service.list_comments(db, user.id, str(record_id))
+
+
+@router.post(
+    "/records/{record_id}/comments",
+    status_code=status.HTTP_201_CREATED,
+    response_model=DataResponse[CommentOut]
+)
+def create_comment(record_id: UUID, body: CommentIn, user: ConsentedUser, db: DbSession):
+    """관리자·쓰기 가족. 기록 작성자에게 알림 (내 기록 → X)"""
+    with db.begin():
+        return {"data": comment_service.create_comment(db, user.id, str(record_id), body.body)}
+
+
+@router.delete("/records/{record_id}/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_comment(record_id: UUID, comment_id: UUID, user: ConsentedUser, db: DbSession):
+    """내 댓글만"""
+    with db.begin():
+        comment_service.delete_comment(db, user.id, str(record_id), str(comment_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

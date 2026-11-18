@@ -6,6 +6,7 @@
     - 시간 예산 소진 → 멈추고 바로 다시 깨움 (Cloud Run 요청 시간 제한 전에 응답)
     - 끝나면 가까운 재시도 시각에 깨우기 예약 (30초 → 2분 → 8분)
 - POST /cleanup: 정리 작업 (Cloud Scheduler 1시간마다, 기존 run_cleanup)
+- POST /notify: 정기 알림 (Cloud Scheduler 매시 정각, 0 * * * * Asia/Seoul) → 푸시 작업 등록 → 커밋 후 깨움
 - 인증: Cloud Run IAM (--no-allow-unauthenticated). 구글 OIDC 토큰 검증은 Cloud Run이 함
 """
 import logging
@@ -68,6 +69,11 @@ def drain():
 def cleanup():
     worker.run_cleanup()
     return {"status": "ok"}
+
+
+@app.post("/notify")
+def notify():
+    return {"created": worker.run_notify()}
 
 
 def next_run_at():

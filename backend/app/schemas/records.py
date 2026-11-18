@@ -262,3 +262,22 @@ class SurveyItemOut(BaseModel):
     area: Area
     label: str
     sort_order: int
+
+
+class CommentIn(BaseModel):
+    """댓글 1~1000자 (앞뒤 공백 제거 후)"""
+
+    body: str = Field(min_length=1, max_length=1000)
+
+    model_config = {"extra": "forbid", "str_strip_whitespace": True}
+
+
+class CommentOut(BaseModel):
+    comment_id: str
+    record_id: str
+    author_id: str
+    # 화면 이름 (null → "가족", 탈퇴 → '탈퇴한 사용자')
+    author_name: str | None
+    is_mine: bool
+    body: str
+    created_at: datetime

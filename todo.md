@@ -87,7 +87,8 @@
 - [x] 최종 실패 = 한 트랜잭션 (jobs 잠금 → failed → 기록 failed + 코드), 잠금 순서 jobs → records
 - [x] AI 설정 검사 — 서버·워커 시작 시 (`production`은 실제 AI만, mock은 local·test만)
 - [x] 정기 작업: 고아 음성 파일 정리 (워커가 1시간마다, 만료 후 7일 유예)
-- [ ] 정기 작업 추가 (단톡방 후보 24시간 삭제, 알림 예약 발송, 만료 키 정리)
+- [x] 정기 알림 (워커 `/notify`: 체크리스트 기한 지남 · 조사 전날 · 컨디션, `dedupe_key`로 1번만)
+- [ ] 정기 작업 추가 (단톡방 후보 24시간 삭제, 만료 키 정리)
 
 ### Storage
 - [x] 비공개 버킷 `audio`(10MB, 음성) · `kakao-imports`(20MB, txt) — `scripts/setup_storage.py`
@@ -101,7 +102,7 @@
 - [x] AI 연동 계약 `ai/interfaces.py` + 임시 구현 `ai/stub.py` + 교체 지점 `ai/provider.py`
 - [x] 개발용 동의 문구 `dev-0.1` (`scripts/seed_dev_consents.py`, 운영에서 실행·사용 차단)
 - [x] 단위 테스트 + 실제 DB 통합 테스트(롤백) + `scripts/smoke_test.py`
-- [ ] 웹(React)용 CORS 설정 (3단계 웹 연동 전)
+- [x] 웹용 CORS 설정 (`CORS_ORIGINS`, Vercel 주소)
 
 ---
 
@@ -298,7 +299,7 @@
 - [x] `GET /v1/records/{id}/versions` — 수정 이력 (A-1, `migrations/004`)
   - [x] 사용자 수정 순번 `version` (text_version과 별개), 저장 시점 `changed_fields`, 분류 주체 스냅샷
 - [x] `POST /v1/records/{id}/exclude`·`/include` — 기록지에서 제외·되돌리기 (작성자만, 삭제 아님, A-1)
-- [ ] `POST /v1/records/{id}/comments` — 다른 가족 기록에 댓글
+- [x] 댓글 `GET`·`POST`·`DELETE /v1/records/{id}/comments` (관리자·쓰기, 내 댓글만 지우기) + 기록 상세 댓글 칸 + 작성자 알림
 
 ### 홈 — A-HOME-006~009
 - [ ] `PUT /v1/parents/{id}/conditions/{date}` — 오늘 컨디션 (하루 1건, 이력은 DB 트리거)
@@ -324,10 +325,10 @@
 - [x] 명세: API 명세서 6장 + `관찰 체크리스트 개발 계획.md` (디자인 SCR_A_310, 재활 제외, 있었어요/없었어요, 기록은 보낼 때 생성, `011_checklists.sql`)
 - [x] 서버: `draft`·보내기·목록·상세·답·제출 (`checklist_service`), 알림 저장, 가족 나가기·탈퇴 자동 취소, 홈 `received_checklists_open`, 체크리스트 기록 분류 고정
 - [x] 앱: 관찰 체크리스트 (보내기·받은 탭), 답하기, 보낸 상세, 가족 화면 버튼, 홈 카드, 기록 아이콘
-- [ ] 👤 `011_checklists.sql` 적용 → `tests/integration/test_checklists.py` + `flutter test test/checklist_screen_test.dart`
+- [x] 👤 `011_checklists.sql` 적용 → `tests/integration/test_checklists.py` + `flutter test test/checklist_screen_test.dart`
 - [ ] 설명 문구 42개 팀 검토 (`survey_items.observation_hint`)
 - [ ] 대·소변 조절 답 문구 ("혼자 하심/조금 도와드림/다 도와드림" 어색함)
-- [ ] 확인 날짜 다음 날 10:00 알림 (정기 작업 · FCM 연동 때)
+- [x] 확인 날짜 다음 날 10:00 알림 (`checklist_overdue`)
 
 ### 조사 일정·브리핑 — A-SCH / A-BRF
 - [ ] 후보 날짜 등록(지난 날짜 불가)·목록·가능 인원
@@ -336,12 +337,18 @@
 - [ ] `GET /v1/parents/{id}/briefing` — 확정 기록지의 꼭 전할 5가지 (미확정이면 안내만)
 
 ### 알림 — POP_A_NOTI / A-SET-002
-- [ ] `GET /v1/notifications`, `PATCH /v1/notifications/{id}/read`
+- [x] `GET /v1/notifications`, `PATCH /v1/notifications/{id}/read`, `POST /v1/notifications/read-all` (`014_notifications.sql`) + 앱 알림 목록·홈 종 아이콘
+- [ ] 👤 `014_notifications.sql` 적용 → `tests/integration/test_notifications.py` + `flutter test`
 - [x] `GET`·`PUT /v1/settings/notifications` — 컨디션·할 일·브리핑 켜기/끄기, `noti_consented` (A-5)
 - [x] `POST /v1/devices`, `DELETE /v1/devices/{id}` — FCM 토큰, 같은 토큰 1건 (A-5)
-- [ ] 발송 조건: `noti` 동의 + 해당 설정 켜짐 + 끄지 않은 기기
-- [ ] FCM 발송 연동
-- [ ] 정기 알림: 조사 전날 20:00 브리핑, 컨디션 저녁 8시, 체크리스트 기한 다음 날 10:00 (꺼 두면 발송 안 함)
+- [x] 발송 조건: `noti` 동의 + 해당 설정 켜짐 + 끄지 않은 기기
+- [x] FCM 발송 (워커 `send_push`, 무효 토큰 → 기기 끔) + 앱 기기 등록·로그아웃 해제·알림 눌러 이동
+- [ ] 👤 Firebase 프로젝트 연결 + 서비스 계정 권한 + `PUSH_PROVIDER=fcm` + 앱 `FIREBASE_*` 빌드 값 (`backend/deploy/cloud-run.md` 7장)
+- [ ] 👤 iOS 푸시: APNs 키 Firebase 등록 (Apple 개발자 계정)
+- [ ] 컨디션 입력 생기면 `CONDITION_REMINDER_ENABLED=true`
+- [ ] 알림 문구 팀 검토 (`scheduled_notification_service` · `notify_record_failed` · 가족 합류 · 댓글)
+- [x] 정기 알림: 조사 전날 20:00 브리핑, 컨디션 저녁 8시, 체크리스트 기한 다음 날 10:00 (꺼 두면 발송 안 함)
+- [x] 추가 알림: 가족 합류 (관리자), 내 기록 댓글, 받아쓰기·분류 실패 (작성자)
 
 ### 웹 추가 — W-DASH-003/004, W-TL-003
 - [ ] `GET /v1/parents/{id}/next-actions` — 부족 항목 3개 + 관찰 예시

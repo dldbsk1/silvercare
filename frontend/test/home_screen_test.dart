@@ -10,6 +10,7 @@ import 'package:silvercare/core/auth/me.dart';
 import 'package:silvercare/features/home/home_api.dart';
 import 'package:silvercare/features/home/screens/home_screen.dart';
 import 'package:silvercare/features/home/voice_recorder.dart';
+import 'package:silvercare/features/notifications/notification_api.dart';
 
 class FakeAuthApi extends AuthApi {
   @override
@@ -38,9 +39,10 @@ Map<String, dynamic> recordJson(String id, String text, {List<String> areas = co
     };
 
 class FakeHomeApi extends HomeApi {
-  FakeHomeApi({this.records = const []});
+  FakeHomeApi({this.records = const [], this.unread = 0});
 
   List<Map<String, dynamic>> records;
+  int unread;
   final texts = <String>[];
 
   @override
@@ -48,6 +50,7 @@ class FakeHomeApi extends HomeApi {
         'parent': {'id': parentId, 'nickname': '엄마'},
         'dday': {'survey_date': '2026-10-28', 'days_left': 3, 'status': 'upcoming'},
         'recent_records': records,
+        'unread_notifications': unread,
       });
 
   @override
@@ -116,13 +119,24 @@ void tallScreen(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
-Widget app(FakeHomeApi api, FakeRecorder recorder) {
+class FakeNotificationApi extends NotificationApi {
+  @override
+  Future<NotificationPage> fetch({String? cursor, int limit = 20}) async =>
+      NotificationPage(items: const [], nextCursor: null, unreadCount: 0);
+}
+
+Widget app(FakeHomeApi api, FakeRecorder recorder, {NotificationApi? notificationApi}) {
   final router = GoRouter(
     initialLocation: '/home',
     routes: [
       GoRoute(
         path: '/home',
-        builder: (_, _) => HomeScreen(homeApi: api, authApi: FakeAuthApi(), recorder: recorder),
+        builder: (_, _) => HomeScreen(
+          homeApi: api,
+          authApi: FakeAuthApi(),
+          recorder: recorder,
+          notificationApi: notificationApi,
+        ),
       ),
     ],
   );
@@ -142,6 +156,25 @@ void main() {
     expect(find.text('10/28(수)'), findsOneWidget);
     expect(find.text('눌러서 말하기'), findsOneWidget);
     expect(find.text('첫 기록을 남겨 보세요'), findsOneWidget);
+  });
+
+  testWidgets('알림: 안 읽음 → 종 아이콘 점 → 누르면 알림 목록 → 돌아오면 새로고침', (tester) async {
+    tallScreen(tester);
+    final api = FakeHomeApi(unread: 2);
+    await tester.pumpWidget(app(api, FakeRecorder(), notificationApi: FakeNotificationApi()));
+    await tester.pumpAndSettle();
+
+    Badge badge() => tester.widget<Badge>(find.byKey(const Key('notification-badge')));
+    expect(badge().isLabelVisible, isTrue);
+
+    await tester.tap(find.byTooltip('알림'));
+    await tester.pumpAndSettle();
+    expect(find.text('아직 받은 알림이 없어요'), findsOneWidget);
+
+    api.unread = 0;
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(badge().isLabelVisible, isFalse);
   });
 
   testWidgets('마이크 → 녹음 중 (정지 버튼·시간) → 2초 미만 정지 → 버리고 처음으로', (tester) async {

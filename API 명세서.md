@@ -229,7 +229,9 @@
 | GET | `/v1/survey/items` | A-DET-002 | P1 | 조사표 52항목(영역·코드·이름·순서), 분류 바꾸기 목록(설계 추가) |
 | POST | `/v1/records/{record_id}/exclude` | A-DET-003 | P1 | 작성자, `status=excluded`로 변경 |
 | GET | `/v1/records/{record_id}/versions` | A-DET-002 | P1 | 원문·수정본·작성자·시각 |
-| POST | `/v1/records/{record_id}/comments` | A-DET-002 | P1 | 가족 타인 기록 댓글 |
+| GET | `/v1/records/{record_id}/comments` | A-DET-002 | P1 | 댓글 목록 (오래된 순, 가족 모두). `meta.can_comment` (관리자·쓰기 + 삭제 예정 아님) |
+| POST | `/v1/records/{record_id}/comments` | A-DET-002 | P1 | 댓글 `{"body"}` 1~1000자 (관리자·쓰기, 내 기록 포함). 기록 작성자에게 `record_comment` 알림 (내 기록 → X). 201 |
+| DELETE | `/v1/records/{record_id}/comments/{comment_id}` | A-DET-002 | P1 | 내 댓글만 (남의 댓글 403, 관리자도). 204 (설계 추가) |
 | POST | `/v1/records/{record_id}/reclassify` | A-HOME-004 | P0 오류복구 | AI 분류 재시도 |
 | POST | `/v1/records/{record_id}/replace-text` | A-HOME-004 | P0 오류복구 | 받아쓰기 실패 음성 → 같은 기록을 글 기록으로 (설계 추가, 4.2.1) |
 | POST | `/v1/records/{record_id}/replace-audio` | A-HOME-004 | P0 오류복구 | 받아쓰기 실패 음성 → 새 녹음으로 교체 (설계 추가, 4.2.1) |
@@ -448,14 +450,14 @@
 - 제출 뒤: 체크리스트 답 고치기 X. 기록은 기록 상세에서 글·출처·날짜 수정·제외 가능 (작성자 = 답한 사람), **분류 변경은 409 `CHECKLIST_ITEM_FIXED`** (질문한 항목 = 분류)
 - 같은 제출 다시 요청 → 기록 다시 만들지 않고 같은 응답 (멱등)
 
-### 6.4 알림 (`notifications` 저장, 푸시 발송은 FCM 연동 후)
+### 6.4 알림 (`notifications` 저장 + 푸시, 13장)
 
 | 시점 | 받는 사람 | `type` | 문구 (예) |
 | --- | --- | --- | --- |
 | 보내기 | 받은 사람 (나 자신이면 X) | `checklist_received` | 형이 엄마 관찰 체크리스트를 보냈어요 (4개, 11/5까지) |
 | 제출 | 보낸 사람 (나 자신이면 X) | `checklist_submitted` | 동생이 체크리스트에 모두 답했어요 |
 | 자동 취소 (나가기·탈퇴) | 상대방 | `checklist_cancelled` | 체크리스트가 취소됐어요 |
-| 확인 날짜 다음 날 10:00 | 받은 사람 (미제출) | `checklist_overdue` | 정기 작업 추가 후 (todo 0단계 정기 작업) |
+| 확인 날짜 다음 날 10:00 | 받은 사람 (미제출·미취소) | `checklist_overdue` | 엄마 체크리스트 확인 날짜가 지났어요 (정기 알림, 13.2) |
 
 - 받는 사람 `notification_settings.tasks_enabled = false` → 알림 저장 X
 
@@ -813,6 +815,54 @@
 
 - 전날 브리핑 예정 시각 20:00, 할 일 마감 다음 날 오전 10:00 등은 **기능명세서의 알림 정책**. 알림을 꺼 두면 푸시를 보내지 않고 앱 내 D-day/할 일은 그대로 보여준다.
 - 푸시는 서버 스케줄러/워커가 실행해야 하며 `notifications` 테이블만 생성해도 자동 발송되지는 않는다.
+
+### 13.1 알림 목록 · 읽음 (POP_A_NOTI) — 마이그레이션 `014_notifications.sql`
+
+**GET `/v1/notifications?cursor&limit`** — 로그인만 (동의 철회 사용자도 지난 알림 확인)
+
+- 최신순 (`created_at desc, id desc`), `limit` 1~50 (기본 20), 커서 = 기록함과 같은 서명 방식 (다른 사용자 커서 → 400 `INVALID_CURSOR`)
+- 나간 공간 알림 X (`parent_id` 있는 알림 → 지금도 그 공간 가족일 때만)
+- `meta`: `next_cursor`, `has_more`, `unread_count` (모든 페이지 같은 값)
+
+```
+{"data":[{"notification_id":"...","type":"record_comment","parent_id":"...","title":"형님이 내 기록에 댓글을 남겼어요",
+  "body":"저도 봤어요","payload":{"record_id":"...","comment_id":"..."},"created_at":"...","read_at":null}],
+ "meta":{"next_cursor":null,"has_more":false,"unread_count":1}}
+```
+
+- **PATCH `/v1/notifications/{id}/read`** → 알림 1건. 이미 읽음 → 그대로. 남의 알림·나간 공간 → 404
+- **POST `/v1/notifications/read-all`** → 204 (설계 추가)
+- 홈 `GET /v1/parents/{id}/home` → `unread_notifications` (종 아이콘 점)
+- DB: 내용 고정 (`read_at`·`sent_at`만 한 번 기록), `dedupe_key` UNIQUE (정기 알림 중복 방지)
+
+### 13.2 알림 종류
+
+| `type` | 언제 | 받는 사람 | 설정 스위치 | `payload` |
+| --- | --- | --- | --- | --- |
+| `checklist_received` | 체크리스트 보냄 | 받은 사람 (나 X) | 할 일 | `checklist_id` |
+| `checklist_submitted` | 모두 답함 | 보낸 사람 (나 X) | 할 일 | `checklist_id` |
+| `checklist_cancelled` | 나가기·탈퇴로 자동 취소 | 상대방 | 할 일 | `checklist_id` |
+| `checklist_overdue` | 확인 날짜 다음 날 10:00 (KST) | 안 낸 받은 사람 | 할 일 | `checklist_id` |
+| `survey_briefing` | 조사일 전날 20:00 | 그 공간 가족 모두 | 브리핑 | `survey_date` |
+| `condition_reminder` | 매일 20:00, 오늘 컨디션 없음 | 관리자·쓰기 가족 | 컨디션 | `date` |
+| `family_joined` | 초대 수락 | 관리자들 (본인 X) | 없음 (항상) | `user_id` |
+| `record_comment` | 내 기록에 댓글 | 기록 작성자 (내 댓글 X) | 없음 | `record_id`, `comment_id` |
+| `record_failed` | 받아쓰기·분류 최종 실패 | 기록 작성자 | 없음 | `record_id` |
+
+- 설정 꺼짐 → 저장 X (목록에도 없음). 스위치 없는 알림 → 항상 저장
+- 정기 알림 (`checklist_overdue`·`survey_briefing`·`condition_reminder`): 워커 `POST /notify` (Cloud Scheduler 매시 정각, 로컬 워커 10분마다)
+  - 보낼 시각 ≤ 지금 < 보낼 시각 + 3시간 (서버 멈춤 뒤 새벽 발송 X)
+  - `dedupe_key` → 여러 번 실행해도 1번. 탈퇴 사용자·삭제 예정 공간 X
+  - `condition_reminder`: 컨디션 입력 화면 생기기 전까지 꺼 둠 (`CONDITION_REMINDER_ENABLED=false`)
+
+### 13.3 푸시 발송 (FCM)
+
+- 알림 저장과 같은 트랜잭션에서 `send_push` 작업 등록 → 커밋 후 워커가 FCM HTTP v1 발송 → `sent_at`
+- 등록 조건: `PUSH_PROVIDER=fcm` + 알림 동의(`noti`) + 끄지 않은 기기 1대 이상. 발송 직전 다시 확인 (그새 읽음·동의 철회 → 안 보냄)
+- 기기마다 1번 요청. 토큰 무효 (`UNREGISTERED`·404) → 그 기기 `revoked_at`. 모든 기기 일시 오류 → 재시도 (30초 → 2분 → 8분)
+- FCM `data`: `notification_id`, `type`, `parent_id`, `payload` 값 (문자열) → 앱이 누른 알림의 화면으로 이동
+- 인증: Cloud Run 서비스 계정 (`roles/firebasecloudmessaging.admin`), 키 파일 X
+- 앱: Android·iOS만 (웹 X). 홈 진입 → 알림 권한 → `POST /v1/devices`, 로그아웃 → `DELETE /v1/devices/{id}`
 
 ---
 

@@ -26,3 +26,5 @@ class HomeOut(BaseModel):
     recent_records: list[RecordListItemOut]
     # 받은 관찰 체크리스트 중 대기 (미제출·미취소) 수 → 홈 카드
     received_checklists_open: int = 0
+    # 안 읽은 알림 수 (모든 공간, 나간 공간 X) → 종 아이콘 점
+    unread_notifications: int = 0

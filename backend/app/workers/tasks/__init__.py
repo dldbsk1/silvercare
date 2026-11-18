@@ -83,4 +83,4 @@ def task(name: str, on_failure: FailureFunc | None = None):
 
 def load_tasks():
     """작업 모듈 import → TASKS 등록. 새 모듈은 여기에 추가"""
-    from app.workers.tasks import account, records  # noqa: F401
+    from app.workers.tasks import account, notifications, records  # noqa: F401

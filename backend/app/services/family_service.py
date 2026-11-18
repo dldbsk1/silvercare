@@ -19,9 +19,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.repositories import family_repo, invite_repo, parent_repo
+from app.repositories import family_repo, invite_repo, parent_repo, user_repo
 from app.schemas.family import AdminTransferIn, InviteAcceptIn, InviteCreateIn, RoleUpdateIn
-from app.services import account_service, checklist_service, consent_service, parent_deletion_service
+from app.services import (
+    account_service,
+    checklist_service,
+    consent_service,
+    notification_service,
+    parent_deletion_service,
+)
 from app.services.access import ParentAccess, get_parent_access
 
 
@@ -240,8 +246,26 @@ def accept(db: Session, user_id: str, body: InviteAcceptIn) -> dict:
 
     family_repo.add_member(db, parent_id, user_id, invite["role"], doc["doc_version"])
     invite_repo.mark_accepted(db, str(invite["id"]), user_id)
+    notify_joined(db, parent_id, user_id)
 
     return {"parent_id": parent_id, "role": invite["role"]}
+
+
+def notify_joined(db: Session, parent_id: str, user_id: str):
+    """새 가족 합류 → 관리자들 (본인 제외) 알림"""
+    user = user_repo.get_user(db, user_id)
+    name = (user["display_name"] if user else None) or "가족"
+    nickname = parent_repo.get_nickname(db, parent_id) or "부모님"
+    for member in family_repo.list_members(db, parent_id):
+        if member["role"] != "admin" or str(member["user_id"]) == user_id:
+            continue
+        notification_service.notify(
+            db, str(member["user_id"]), parent_id, "family_joined",
+            f"{name}님이 가족으로 들어왔어요",
+            f"이제 {nickname} 기록을 함께 남길 수 있어요.",
+            {"user_id": user_id},
+            setting=None,
+        )
 
 
 # ── 구성원 ──

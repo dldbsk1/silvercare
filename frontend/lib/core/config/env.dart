@@ -25,4 +25,14 @@ class Env {
   /// publishable key만 (secret key 앱에 넣기 X)
   static const supabasePublishableKey =
       String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
+
+  /// 푸시 (Firebase). Firebase 콘솔 → 프로젝트 설정 → Android 앱 값
+  /// 비움 → 푸시 X (앱 안 알림 목록만). 웹 → 항상 푸시 X
+  static const firebaseApiKey = String.fromEnvironment('FIREBASE_API_KEY');
+  static const firebaseAppId = String.fromEnvironment('FIREBASE_APP_ID');
+  static const firebaseSenderId = String.fromEnvironment('FIREBASE_SENDER_ID');
+  static const firebaseProjectId = String.fromEnvironment('FIREBASE_PROJECT_ID');
+
+  static bool get firebaseConfigured =>
+      firebaseApiKey.isNotEmpty && firebaseAppId.isNotEmpty && firebaseSenderId.isNotEmpty && firebaseProjectId.isNotEmpty;
 }

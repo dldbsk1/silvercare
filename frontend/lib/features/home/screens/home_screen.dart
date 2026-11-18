@@ -6,8 +6,11 @@ import 'package:go_router/go_router.dart';
 import '../../../app/theme.dart';
 import '../../../core/api/api_exception.dart';
 import '../../../core/auth/auth_api.dart';
+import '../../../core/push/push_service.dart';
 import '../../checklists/checklist_api.dart';
 import '../../checklists/screens/checklist_screen.dart';
+import '../../notifications/notification_api.dart';
+import '../../notifications/screens/notifications_screen.dart';
 import '../../records/record_api.dart';
 import '../../records/screens/record_detail_screen.dart';
 import '../../records/widgets/record_card.dart';
@@ -27,9 +30,18 @@ import '../voice_recorder.dart';
 ///
 /// 음성: 분류 시작 전에는 업로드 X (잘못 녹음한 음성 저장 X). 2초 미만 → 버림
 /// 처리 대기: 2초마다 확인, 60초 넘으면 중단 + 기록함 안내
-/// TODO(B단계): 오늘 컨디션, 받은 체크리스트, 알림 개수
+/// 알림: 종 아이콘 (안 읽음 → 점) → 알림 목록. 홈 첫 진입 → 푸시 등록 (권한 요청)
+/// TODO(B단계): 오늘 컨디션
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, this.homeApi, this.authApi, this.recorder, this.recordApi, this.checklistApi});
+  const HomeScreen({
+    super.key,
+    this.homeApi,
+    this.authApi,
+    this.recorder,
+    this.recordApi,
+    this.checklistApi,
+    this.notificationApi,
+  });
 
   /// 테스트용 교체
   final HomeApi? homeApi;
@@ -37,6 +49,7 @@ class HomeScreen extends StatefulWidget {
   final AuthApi? authApi;
   final VoiceRecorder? recorder;
   final RecordApi? recordApi;
+  final NotificationApi? notificationApi;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -79,15 +92,20 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _resultRecordId;
   bool _resultPending = false;
 
+  StreamSubscription<void>? _pushSub;
+
   @override
   void initState() {
     super.initState();
     _textController.addListener(() => setState(() {}));
     _load();
+    // 앱 켜진 중 푸시 도착 → 종 아이콘 점
+    _pushSub = PushService.instance.received.listen((_) => _refreshRecent());
   }
 
   @override
   void dispose() {
+    _pushSub?.cancel();
     _ticker?.cancel();
     _levelSub?.cancel();
     _textController.dispose();
@@ -109,9 +127,17 @@ class _HomeScreenState extends State<HomeScreen> {
         _home = home;
         _loadError = null;
       });
+      unawaited(PushService.instance.register());
     } on ApiException catch (e) {
       if (mounted) setState(() => _loadError = e.message);
     }
+  }
+
+  Future<void> _openNotifications() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => NotificationsScreen(api: widget.notificationApi)),
+    );
+    _refreshRecent();
   }
 
   /// 받은 관찰 체크리스트 (가족 탭 안 화면, 받은 탭)
@@ -228,7 +254,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _savingMessage = '음성을 올리는 중이에요';
     });
     try {
-      final upload = await _api.requestUpload(home.parentId);
+      final upload = await _api.requestUpload(home.parentId, contentType: audio.contentType);
       await _api.uploadAudio(upload, await audio.readBytes());
       final recordId = await _api.createVoice(
         home.parentId,
@@ -416,12 +442,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         IconButton(
           tooltip: '알림',
-          icon: const Icon(
-            Icons.notifications_none,
-            size: 28,
-            color: AppColors.text,
+          icon: Badge(
+            key: const Key('notification-badge'),
+            isLabelVisible: home.unreadNotifications > 0,
+            smallSize: 9,
+            backgroundColor: AppColors.primary,
+            child: const Icon(
+              Icons.notifications_none,
+              size: 28,
+              color: AppColors.text,
+            ),
           ),
-          onPressed: () => _toast('알림은 준비 중이에요.'),
+          onPressed: _openNotifications,
         ),
       ],
     );

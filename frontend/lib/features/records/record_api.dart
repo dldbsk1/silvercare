@@ -226,6 +226,41 @@ class RecordVersions {
 }
 
 /// 기록 상세: 조회·수정·제외·재처리·음성·조사표 항목
+/// 댓글 1건 (GET /records/{id}/comments)
+class RecordComment {
+  RecordComment({
+    required this.id,
+    required this.authorName,
+    required this.isMine,
+    required this.body,
+    required this.createdAt,
+  });
+
+  factory RecordComment.fromJson(Map<String, dynamic> json) => RecordComment(
+        id: json['comment_id'] as String,
+        authorName: json['author_name'] as String?,
+        isMine: json['is_mine'] as bool,
+        body: json['body'] as String,
+        createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
+      );
+
+  final String id;
+  final String? authorName;
+  final bool isMine;
+  final String body;
+  final DateTime createdAt;
+
+  String get authorLabel => isMine ? '나' : (authorName ?? '가족');
+}
+
+/// 댓글 목록 + 입력칸 보이기 (보기 가족·삭제 예정 공간 → false)
+class RecordComments {
+  RecordComments({required this.items, required this.canComment});
+
+  final List<RecordComment> items;
+  final bool canComment;
+}
+
 class RecordApi {
   RecordApi({this.client});
 
@@ -291,6 +326,26 @@ class RecordApi {
 
   Future<RecordDetail> include(String recordId) async =>
       RecordDetail.fromJson(await _api.post('/records/$recordId/include') as Map<String, dynamic>);
+
+  // ── 댓글 (A-DET-002) ──
+
+  Future<RecordComments> fetchComments(String recordId) async {
+    final page = await _api.getPage('/records/$recordId/comments');
+    final meta = Map<String, dynamic>.from(page['meta'] as Map? ?? const {});
+    return RecordComments(
+      items: [for (final c in page['data'] as List) RecordComment.fromJson(c as Map<String, dynamic>)],
+      canComment: meta['can_comment'] as bool? ?? false,
+    );
+  }
+
+  /// 1~1000자. 기록 작성자에게 알림
+  Future<RecordComment> addComment(String recordId, String body) async => RecordComment.fromJson(
+        await _api.post('/records/$recordId/comments', body: {'body': body}) as Map<String, dynamic>,
+      );
+
+  /// 내 댓글만
+  Future<void> deleteComment(String recordId, String commentId) =>
+      _api.delete('/records/$recordId/comments/$commentId');
 
   /// 실패한 단계부터 다시 (받아쓰기 / 분류)
   Future<void> reclassify(String recordId) => _api.post('/records/$recordId/reclassify');

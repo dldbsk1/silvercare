@@ -1,7 +1,8 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
-    auth, checklists, consents, dev, family, parents, records, settings as settings_api, survey, symptoms, users,
+    auth, checklists, consents, dev, family, notifications, parents, records, settings as settings_api, survey,
+    symptoms, users,
 )
 from app.core.config import settings
 
@@ -17,6 +18,7 @@ api_router.include_router(checklists.router, tags=["checklists"])
 api_router.include_router(survey.router, tags=["survey"])
 api_router.include_router(family.router, tags=["family"])
 api_router.include_router(settings_api.router, tags=["settings"])
+api_router.include_router(notifications.router, tags=["notifications"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 
 # 로컬 개발 확인용

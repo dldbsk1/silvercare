@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.repositories import record_repo, upload_repo
-from app.services import classification_service
+from app.services import classification_service, notification_service
 from app.workers.queue import enqueue
 
 
@@ -96,3 +96,4 @@ def mark_failed(db: Session, record_id: str, code: str):
         return
 
     record_repo.set_processing_status(db, record_id, "failed", code)
+    notification_service.notify_record_failed(db, record, "transcription")

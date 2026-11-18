@@ -70,6 +70,10 @@ class FakeRecordApi extends RecordApi {
 
   final updates = <Map<String, dynamic>>[];
   final calls = <String>[];
+
+  /// 댓글
+  final comments = <RecordComment>[];
+  bool canComment = false;
   final updateErrors = <ApiException>[];
 
   RecordDetail get _detail => RecordDetail.fromJson(current);
@@ -177,6 +181,24 @@ class FakeRecordApi extends RecordApi {
   }
 
   @override
+  Future<RecordComments> fetchComments(String recordId) async =>
+      RecordComments(items: List.of(comments), canComment: canComment);
+
+  @override
+  Future<RecordComment> addComment(String recordId, String body) async {
+    calls.add('addComment:$body');
+    final added = RecordComment(id: 'c${comments.length + 1}', authorName: '나', isMine: true, body: body, createdAt: DateTime(2026, 10, 14, 9));
+    comments.add(added);
+    return added;
+  }
+
+  @override
+  Future<void> deleteComment(String recordId, String commentId) async {
+    calls.add('deleteComment:$commentId');
+    comments.removeWhere((c) => c.id == commentId);
+  }
+
+  @override
   Future<RecordDetail> replaceAudio(String recordId, {required String uploadId, required int durationSeconds}) async {
     calls.add('replaceAudio:$uploadId');
     current = {...current, 'processing_status': 'pending', 'processing_error': null};
@@ -189,7 +211,7 @@ class FakeUploadApi extends HomeApi {
   final uploaded = <int>[];
 
   @override
-  Future<AudioUpload> requestUpload(String parentId) async =>
+  Future<AudioUpload> requestUpload(String parentId, {String contentType = HomeApi.audioContentType}) async =>
       AudioUpload(uploadId: 'u1', bucket: 'audio', path: 'p/u1.m4a', token: 't');
 
   @override
@@ -306,7 +328,7 @@ void main() {
     expect(find.text('0:48'), findsOneWidget);
   });
 
-  testWidgets('다른 가족 기록: 보기만 (바꾸기·고치기·제외·댓글 없음)', (tester) async {
+  testWidgets('다른 가족 기록: 보기만 (바꾸기·고치기·제외 없음)', (tester) async {
     await open(tester, FakeRecordApi(rec(mine: false)));
 
     expect(find.text('10/13 19:40 · 형'), findsOneWidget);
@@ -314,7 +336,40 @@ void main() {
     expect(find.text('변경'), findsNothing);
     expect(find.text('글 고치기'), findsNothing);
     expect(find.text('기록지에서 제외'), findsNothing);
-    expect(find.text('댓글'), findsNothing);
+  });
+
+  testWidgets('댓글: 목록 · 남기기 · 내 댓글 지우기', (tester) async {
+    final api = FakeRecordApi(rec(mine: false))
+      ..canComment = true
+      ..comments.add(RecordComment(id: 'c0', authorName: '형', isMine: false, body: '저도 봤어요', createdAt: DateTime(2026, 10, 13, 20)));
+    await open(tester, api);
+
+    expect(find.text('댓글 1'), findsOneWidget);
+    expect(find.text('형 · 10/13 20:00'), findsOneWidget);
+    expect(find.text('저도 봤어요'), findsOneWidget);
+    // 남의 댓글 → 지우기 X
+    expect(find.text('지우기'), findsNothing);
+
+    await tester.enterText(find.byKey(const Key('comment-input')), '  고마워요  ');
+    await tester.pump();
+    await tester.tap(find.byTooltip('댓글 보내기'));
+    await tester.pumpAndSettle();
+
+    expect(api.calls, contains('addComment:고마워요'));
+    expect(find.text('댓글 2'), findsOneWidget);
+    expect(find.text('고마워요'), findsOneWidget);
+
+    await tester.tap(find.text('지우기'));
+    await tester.pumpAndSettle();
+    expect(api.calls, contains('deleteComment:c2'));
+    expect(find.text('고마워요'), findsNothing);
+  });
+
+  testWidgets('댓글: 보기 가족 → 목록만 (입력칸 없음)', (tester) async {
+    await open(tester, FakeRecordApi(rec(mine: false)));
+
+    expect(find.text('아직 댓글이 없어요'), findsOneWidget);
+    expect(find.byKey(const Key('comment-input')), findsNothing);
   });
 
   testWidgets('수정됨 · 원문 보기 / 수정 이력 펼치기', (tester) async {

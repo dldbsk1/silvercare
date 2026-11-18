@@ -5,6 +5,7 @@ import '../../../app/theme.dart';
 import '../../../core/api/api_exception.dart';
 import '../../../core/auth/auth_api.dart';
 import '../../../core/auth/me.dart';
+import '../../../core/push/push_service.dart';
 import '../../family/family_api.dart';
 import '../../family/widgets/family_widgets.dart';
 import '../../family/widgets/parent_edit_sheet.dart';
@@ -238,6 +239,7 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
       action: '로그아웃',
     );
     if (!yes) return;
+    await PushService.instance.unregister();
     await _auth.signOut();
     if (mounted) context.go('/');
   }

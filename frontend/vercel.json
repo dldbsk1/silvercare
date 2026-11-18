@@ -1,0 +1,5 @@
+{
+  "installCommand": "git clone --depth 1 -b 3.47.9 https://github.com/flutter/flutter.git && flutter/bin/flutter config --enable-web && flutter/bin/flutter pub get",
+  "buildCommand": "flutter/bin/flutter build web --release --dart-define=API_BASE_URL=$API_BASE_URL --dart-define=SUPABASE_URL=$SUPABASE_URL --dart-define=SUPABASE_PUBLISHABLE_KEY=$SUPABASE_PUBLISHABLE_KEY",
+  "outputDirectory": "build/web"
+}

@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     # 탈퇴·동의 철회 삭제 실행 (워커). ⚖️ 법률 상담 전 운영 false, 개발 DB에서만 켜서 확인
     DELETION_EXECUTE_ENABLED: bool = False
 
+    # 개발용(dev-) 동의 문구 허용. local → 항상 허용 / staging → 이 값 / production → 켜면 시작 중단
+    # 팀 내부 베타 (실제 문구 발행 전)용
+    ALLOW_DEV_CONSENTS: bool = False
+
     # 웹 앱(브라우저) 허용 주소. 쉼표 구분. 비움 + local → localhost·127.0.0.1 모든 포트 허용 (flutter run -d chrome)
     CORS_ORIGINS: str = ""
 
@@ -66,6 +70,8 @@ class Settings(BaseSettings):
     def require_deploy_secrets(self):
         if self.ENV in ("staging", "production") and not self.CURSOR_SECRET:
             raise ValueError("CURSOR_SECRET 필요 (staging·production)")
+        if self.ENV == "production" and self.ALLOW_DEV_CONSENTS:
+            raise ValueError("ALLOW_DEV_CONSENTS=true 는 production 불가 (staging만)")
         if self.WORKER_WAKE == "cloud_tasks":
             missing = [k for k in ("GCP_PROJECT", "WORKER_URL", "TASKS_INVOKER_SA") if not getattr(self, k)]
             if missing:

@@ -106,4 +106,18 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('service 문구 전체'), findsOneWidget);
   });
+
+  testWidgets('발행된 문구 없음 → 전체 동의 X, 준비 중 안내 + 다시 불러오기', (tester) async {
+    await tester.pumpWidget(app(EmptyConsentApi()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('전체 동의'), findsNothing);
+    expect(find.text('동의 문구를 준비하고 있어요. 잠시 후 다시 시도해 주세요.'), findsOneWidget);
+    expect(find.text('다시 불러오기'), findsOneWidget);
+  });
+}
+
+class EmptyConsentApi extends FakeConsentApi {
+  @override
+  Future<List<ConsentDocument>> fetchRequired() async => [];
 }

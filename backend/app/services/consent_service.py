@@ -4,6 +4,7 @@
 - 동의 이력은 지우지 않고 revoked_at으로 철회를 표시한다
 - 동의 문구가 새 버전으로 바뀌면 이전 버전 동의는 "완료"로 보지 않는다 (다시 동의)
 - 운영(ENV != local)에서는 개발용(dev-) 문구를 유효한 문구로 보지 않는다
+  (예외: staging + ALLOW_DEV_CONSENTS, 팀 내부 베타)
 - 필수 문구가 하나라도 발행되지 않았으면 누구도 동의 완료가 아니다
 - family_share: 가입 동의 X. 초대 수락 때 부모님별 동의 (family_members에 기록)
 - 필수 동의 철회 → 삭제 예약 (내가 쓴 기록, deletion_service). 예정일 전 다시 동의 → 예약 취소
@@ -22,8 +23,12 @@ REQUIRED_TYPES = ("service", "privacy", "health")
 SHARE_TYPE = "family_share"
 
 
+def dev_documents_allowed() -> bool:
+    return settings.ENV == "local" or (settings.ENV == "staging" and settings.ALLOW_DEV_CONSENTS)
+
+
 def published_documents(db: Session) -> dict[str, dict]:
-    if settings.ENV == "local":
+    if dev_documents_allowed():
         rows = consent_repo.list_active_documents(db)
     else:
         rows = consent_repo.list_active_documents_excluding_dev(db)

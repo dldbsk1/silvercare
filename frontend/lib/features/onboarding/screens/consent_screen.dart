@@ -60,6 +60,11 @@ class _ConsentScreenState extends State<ConsentScreen> {
       final documents = await _consentApi.fetchRequired();
       documents.sort((a, b) => _rank(a.type).compareTo(_rank(b.type)));
       if (!mounted) return;
+      // 발행된 문구 없음 (서버 설정) → 빈 목록 대신 안내 + 다시 불러오기
+      if (documents.isEmpty) {
+        setState(() => _error = '동의 문구를 준비하고 있어요. 잠시 후 다시 시도해 주세요.');
+        return;
+      }
       setState(() {
         _documents = documents;
         _checked.removeWhere((type) => documents.every((d) => d.type != type));

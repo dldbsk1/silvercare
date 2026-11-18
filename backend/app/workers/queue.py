@@ -9,6 +9,8 @@ from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.workers import wake
+
 
 def enqueue(
     db: Session,
@@ -19,6 +21,8 @@ def enqueue(
     run_at: datetime | None = None,
     max_attempts: int = 3
 ) -> str:
+    # 커밋 후 워커 깨우기 (WORKER_WAKE=cloud_tasks일 때만)
+    wake.request(db)
     return str(db.execute(
         text("""
             INSERT INTO jobs (

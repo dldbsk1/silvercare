@@ -46,6 +46,17 @@ class Settings(BaseSettings):
     # 웹 앱(브라우저) 허용 주소. 쉼표 구분. 비움 + local → localhost·127.0.0.1 모든 포트 허용 (flutter run -d chrome)
     CORS_ORIGINS: str = ""
 
+    # 워커 깨우기 (app/workers/wake.py)
+    # none: 상시 워커 프로세스 폴링 (로컬) / cloud_tasks: Cloud Run 워커 서비스를 작업 등록 때 깨움
+    WORKER_WAKE: Literal["none", "cloud_tasks"] = "none"
+    GCP_PROJECT: str | None = None
+    GCP_LOCATION: str = "asia-northeast1"
+    TASKS_QUEUE: str = "worker-wake"
+    # 워커 서비스 주소 (끝 / 없이). 예: https://silvercare-worker-123456789.asia-northeast1.run.app
+    WORKER_URL: str | None = None
+    # Cloud Tasks·Scheduler가 워커 호출할 때 쓰는 서비스 계정 (워커 run.invoker 권한)
+    TASKS_INVOKER_SA: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
         extra="ignore"
@@ -55,6 +66,10 @@ class Settings(BaseSettings):
     def require_deploy_secrets(self):
         if self.ENV in ("staging", "production") and not self.CURSOR_SECRET:
             raise ValueError("CURSOR_SECRET 필요 (staging·production)")
+        if self.WORKER_WAKE == "cloud_tasks":
+            missing = [k for k in ("GCP_PROJECT", "WORKER_URL", "TASKS_INVOKER_SA") if not getattr(self, k)]
+            if missing:
+                raise ValueError(f"WORKER_WAKE=cloud_tasks → {', '.join(missing)} 필요")
         return self
 
 

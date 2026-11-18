@@ -10,3 +10,4 @@ tests/
 run.ps1
 Dockerfile
 .dockerignore
+deploy/

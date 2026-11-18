@@ -1,0 +1,9 @@
+# gcloud builds submit 업로드 제외 (비밀값·가상환경)
+.gcloudignore
+.venv/
+.env
+.env.*
+__pycache__/
+*.pyc
+.pytest_cache/
+deploy/

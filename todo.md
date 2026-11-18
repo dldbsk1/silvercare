@@ -42,7 +42,7 @@
 - [ ] ⚖️ 동의 철회 · 부모님 본인 개인정보 삭제 요구 → **유예 없이 즉시 삭제** 경로 (별도 개발). 지금 A-5 필수 동의 철회는 7일 예약이라 이 원칙과 다름 → 자문 후 같이 수정
 - [ ] 공간 삭제 요청 중 탈퇴 처리 규칙 (관리자 탈퇴 시 열린 요청 취소? 유지?)
 - [ ] STT·LLM 제공업체 선택 (Whisper / Clova / Google) — AI 팀원과
-- [ ] 백엔드 배포처 (Railway / Render / Fly.io)
+- [x] 백엔드 배포처 → Cloud Run (API·워커 서비스, Cloud Tasks로 워커 깨우기, `backend/deploy/cloud-run.md`)
 - [ ] 단톡방 원문을 외부 AI에 보낼 범위 (다른 가족 개인정보 포함, API 명세서 10장)
 - [x] 호칭: 부모님 = 관리자가 정한 공통 호칭(`parents.nickname`) / 사용자 = 본인이 정한 표시 이름(`users.display_name`). 관계 호칭(형·동생) 없음
 - [ ] 52항목 외 일반 분류(감정 등) 추가 여부 — 추가 시 52항목과 분리된 별도 테이블
@@ -393,7 +393,7 @@
 - [ ] `survey_items` 52항목을 최신 공식 조사표와 1회 대조 (현재 legacy 버전)
 - [x] Dockerfile — API 서버·워커 같은 이미지, 실행 명령만 다르게 (`backend/Dockerfile`, 환경 변수 예시 `backend/.env.production.example`)
 - [ ] 배포 순서: 워커 중지 → 마이그레이션 → 새 워커 시작 (lease 없는 이전 워커와 섞이지 않게)
-- [ ] 워커 개수 결정 (긴 받아쓰기가 대기열을 막지 않게, 여러 개 동시 실행 가능)
+- [x] 워커 개수 → Cloud Run 워커 max-instances 2 · concurrency 4 (요청 올 때만 실행)
 - [ ] 운영·스테이징 `CURSOR_SECRET` 필수 (없으면 시작 안 됨, 긴 임의 문자열)
 - [ ] 운영 `AI_PROVIDER=real` 필수 — AI 합치기 전에는 운영 서버·워커가 시작 안 됨 (의도)
 - [ ] 운영 `DELETION_EXECUTE_ENABLED` — ⚖️ 삭제 규칙 확정 전 false (기본값). 워커에 `SUPABASE_SECRET_KEY` 필요 (음성·로그인 계정 삭제)

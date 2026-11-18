@@ -3,6 +3,7 @@
 #   docker build -t silvercare-backend .
 #   API 서버: docker run --env-file .env.production -p 8000:8000 silvercare-backend
 #   워커:     docker run --env-file .env.production silvercare-backend python -m app.workers.worker
+#   워커 (Cloud Run, 요청 올 때만): python -m app.workers.http  → deploy/cloud-run.md
 #
 # 환경 변수: .env.production.example 참고 (이미지에 .env 포함 X → 배포처 설정에서 주입)
 
